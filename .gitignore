@@ -3,9 +3,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 # ---- Virtual environments ----
-venv/
-.venv/
-env/
+fraud_detection_env/
+__pycache__/
+*.pyc
 # ---- Jupyter ----
 .ipynb_checkpoints/
 # ---- VS Code ----
