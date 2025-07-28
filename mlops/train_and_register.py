@@ -19,6 +19,10 @@ import cloudpickle
 # Config
 # -----------------------------
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "data_raw.csv"
+# Public copy of the credit card fraud dataset
+DATA_URL = (
+    "https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv"
+)
 MODEL_NAME = os.getenv("MODEL_NAME", "fraud_detector")
 DECISION_THRESHOLD = float(os.getenv("DECISION_THRESHOLD", 0.640))
 
@@ -30,6 +34,23 @@ TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 ARTIFACT_LOCATION = os.getenv("MLFLOW_ARTIFACT_LOCATION", "./mlruns")
 
 mlflow.set_tracking_uri(TRACKING_URI)
+
+# -----------------------------
+# Helper utilities
+# -----------------------------
+def ensure_data() -> None:
+    """Download the training dataset if it's missing."""
+    if DATA_PATH.exists() and DATA_PATH.stat().st_size > 1024:
+        return
+
+    import requests
+
+    DATA_PATH.parent.mkdir(exist_ok=True)
+    with requests.get(DATA_URL, stream=True) as r:
+        r.raise_for_status()
+        with open(DATA_PATH, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
 
 # -----------------------------
 # Custom PyFunc Model
@@ -87,6 +108,7 @@ def main():
     # -------------------------
     # Load data
     # -------------------------
+    ensure_data()
     df = pd.read_csv(DATA_PATH)
     X_full = df.drop("Class", axis=1)
     y_full = df["Class"]
@@ -200,12 +222,14 @@ def main():
         client = mlflow.tracking.MlflowClient()
         client.transition_model_version_stage(
             name=MODEL_NAME,
-            version=model_info.registered_model_version.version,
+            version=model_info.registered_model_version,
             stage="Production",
             archive_existing_versions=True,
         )
 
-        print(f"Model registered as {MODEL_NAME} v{model_info.registered_model_version.version} and promoted to Production.")
+        print(
+            f"Model registered as {MODEL_NAME} v{model_info.registered_model_version} and promoted to Production."
+        )
 
 
 if __name__ == "__main__":
