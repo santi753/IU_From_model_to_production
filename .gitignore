@@ -1,12 +1,23 @@
-# ---- Python basics ----
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+fraud_detection_env/
+
+# --- Python cache ---
 __pycache__/
 *.py[cod]
 *.pyo
-# ---- Virtual environments ----
-fraud_detection_env/
-__pycache__/
-*.pyc
-# ---- Jupyter ----
+
+# --- Jupyter ---
 .ipynb_checkpoints/
-# ---- VS Code ----
+
+# --- MLflow (local artifacts) ---
+mlruns/
+mlflow.db
+mlartifacts/
+
+# --- IDE ---
 .vscode/
+.idea/
