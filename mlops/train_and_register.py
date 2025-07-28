@@ -19,38 +19,13 @@ import cloudpickle
 # Config
 # -----------------------------
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "data_raw.csv"
-# Public copy of the credit card fraud dataset
-DATA_URL = (
-    "https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv"
-)
 MODEL_NAME = os.getenv("MODEL_NAME", "fraud_detector")
 DECISION_THRESHOLD = float(os.getenv("DECISION_THRESHOLD", 0.640))
 
-# IMPORTANT: Model Registry requires a DB-backed tracking store (not the default file store).
-# Example (works locally):
-#   export MLFLOW_TRACKING_URI="sqlite:///mlflow.db"
-#   export MLFLOW_ARTIFACT_LOCATION="./mlruns"
 TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 ARTIFACT_LOCATION = os.getenv("MLFLOW_ARTIFACT_LOCATION", "./mlruns")
 
 mlflow.set_tracking_uri(TRACKING_URI)
-
-# -----------------------------
-# Helper utilities
-# -----------------------------
-def ensure_data() -> None:
-    """Download the training dataset if it's missing."""
-    if DATA_PATH.exists() and DATA_PATH.stat().st_size > 1024:
-        return
-
-    import requests
-
-    DATA_PATH.parent.mkdir(exist_ok=True)
-    with requests.get(DATA_URL, stream=True) as r:
-        r.raise_for_status()
-        with open(DATA_PATH, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
 
 # -----------------------------
 # Custom PyFunc Model
@@ -72,6 +47,9 @@ class FraudModelWrapper(mlflow.pyfunc.PythonModel):
             self.feature_order = json.load(f)  # original input order (30 cols)
         with open(context.artifacts["threshold"], "r") as f:
             self.threshold = float(f.read().strip())
+        # Load the exact feature names the model was trained with
+        with open(context.artifacts["trained_features"], "r") as f:
+            self.trained_features = json.load(f)
 
     def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         # Ensure all required columns exist
@@ -79,15 +57,24 @@ class FraudModelWrapper(mlflow.pyfunc.PythonModel):
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
 
+        # Work with a copy of the input columns
         X = df[self.feature_order].copy()
 
-        # scale Amount, Time using training-fitted scaler
-        X[["Amount", "Time"]] = self.scaler.transform(X[["Amount", "Time"]])
+        # Scale Amount and Time (BEFORE adding engineered features)
+        # Create a temporary DataFrame for scaling
+        scale_df = X[["Amount", "Time"]].copy()
+        scaled_values = self.scaler.transform(scale_df)
+        X["Amount"] = scaled_values[:, 0]
+        X["Time"] = scaled_values[:, 1]
 
-        # engineered features
+        # Add engineered features (using scaled values)
         X["Amount_Time"] = X["Amount"] * X["Time"]
         X["V1_V2"] = X["V1"] * X["V2"]
         X["V3_V4"] = X["V3"] * X["V4"]
+        
+        # Ensure columns are in the exact order the model expects
+        X = X[self.trained_features]
+        
         return X
 
     def predict(self, context, model_input):
@@ -108,7 +95,6 @@ def main():
     # -------------------------
     # Load data
     # -------------------------
-    ensure_data()
     df = pd.read_csv(DATA_PATH)
     X_full = df.drop("Class", axis=1)
     y_full = df["Class"]
@@ -127,24 +113,25 @@ def main():
     )
 
     # -------------------------
-    # Fit scaler on train only
+    # Fit scaler on train only (BEFORE creating copies)
     # -------------------------
     scaler = StandardScaler().fit(X_train[["Amount", "Time"]])
 
-    # Apply scaling
-    for frame in (X_train, X_val, X_test):
+    # Apply scaling and create engineered features
+    def prepare_features(frame: pd.DataFrame, scaler: StandardScaler) -> pd.DataFrame:
+        """Apply scaling and add engineered features"""
+        frame = frame.copy()
+        # Scale Amount and Time
         frame[["Amount", "Time"]] = scaler.transform(frame[["Amount", "Time"]])
-
-    # Engineered features
-    def add_interactions(frame: pd.DataFrame):
+        # Add engineered features
         frame["Amount_Time"] = frame["Amount"] * frame["Time"]
         frame["V1_V2"] = frame["V1"] * frame["V2"]
         frame["V3_V4"] = frame["V3"] * frame["V4"]
         return frame
 
-    X_train = add_interactions(X_train)
-    X_val = add_interactions(X_val)
-    X_test = add_interactions(X_test)
+    X_train = prepare_features(X_train, scaler)
+    X_val = prepare_features(X_val, scaler)
+    X_test = prepare_features(X_test, scaler)
 
     # -------------------------
     # Balance with SMOTE (train only)
@@ -164,6 +151,10 @@ def main():
         n_jobs=-1,
     )
     clf.fit(X_train_bal, y_train_bal)
+    
+    # Store the actual feature names used during training
+    trained_features = X_train_bal.columns.tolist()
+    print(f"Model trained with {len(trained_features)} features: {trained_features}")
 
     # -------------------------
     # Log to MLflow as pyfunc + register
@@ -178,6 +169,7 @@ def main():
         mlflow.log_param("max_depth", 12)
         mlflow.log_param("min_samples_split", 5)
         mlflow.log_param("min_samples_leaf", 2)
+        mlflow.log_param("num_features", len(trained_features))
 
         # Save artifacts needed by wrapper
         artifacts_dir = Path("artifacts")
@@ -192,6 +184,9 @@ def main():
             json.dump(feature_order, f)
         with open(artifacts_dir / "threshold.txt", "w") as f:
             f.write(str(DECISION_THRESHOLD))
+        # Save the trained feature names IN THE EXACT ORDER
+        with open(artifacts_dir / "trained_features.json", "w") as f:
+            json.dump(trained_features, f)
 
         # Input/Output signature
         from mlflow.models.signature import ModelSignature
@@ -201,7 +196,7 @@ def main():
         output_schema = Schema([ColSpec("double", "probability"), ColSpec("integer", "label")])
         signature = ModelSignature(inputs=input_schema, outputs=output_schema)
 
-        # Example for UI
+        # Example for UI - use only the original features (wrapper will add engineered ones)
         input_example = X_full.head(1)[feature_order].to_dict(orient="records")[0]
 
         model_info = mlflow.pyfunc.log_model(
@@ -212,24 +207,35 @@ def main():
                 "scaler": str(artifacts_dir / "scaler.pkl"),
                 "feature_order": str(artifacts_dir / "feature_order.json"),
                 "threshold": str(artifacts_dir / "threshold.txt"),
+                "trained_features": str(artifacts_dir / "trained_features.json"),
             },
             signature=signature,
             input_example=input_example,
             registered_model_name=MODEL_NAME,
         )
 
-        # Optionally transition to Production
+        # Get the version number correctly
+        if hasattr(model_info, 'registered_model_version'):
+            if hasattr(model_info.registered_model_version, 'version'):
+                version = model_info.registered_model_version.version
+            else:
+                version = model_info.registered_model_version
+        else:
+            # Fallback: query the latest version
+            client = mlflow.tracking.MlflowClient()
+            latest_versions = client.get_latest_versions(MODEL_NAME)
+            version = latest_versions[-1].version if latest_versions else "1"
+
+        # Transition to Production
         client = mlflow.tracking.MlflowClient()
         client.transition_model_version_stage(
             name=MODEL_NAME,
-            version=model_info.registered_model_version,
+            version=str(version),
             stage="Production",
             archive_existing_versions=True,
         )
 
-        print(
-            f"Model registered as {MODEL_NAME} v{model_info.registered_model_version} and promoted to Production."
-        )
+        print(f"Model registered as {MODEL_NAME} v{version} and promoted to Production.")
 
 
 if __name__ == "__main__":
