@@ -53,3 +53,9 @@ The response contains the predicted label and fraud probability.
 - `API_KEY` – key required when calling the API (`dev-key` by default)
 
 Set them in PowerShell using `$env:VAR = 'value'` before running the training script or API server.
+
+## Check MLflow
+
+- $env:MLFLOW_TRACKING_URI = "sqlite:///mlflow.db"
+- $env:API_KEY = "dev-key"
+- mlflow ui --backend-store-uri sqlite:///mlflow.db
