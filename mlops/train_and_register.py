@@ -13,7 +13,6 @@ from imblearn.over_sampling import SMOTE
 
 import mlflow
 import mlflow.pyfunc
-import cloudpickle
 
 # -----------------------------
 # Config
