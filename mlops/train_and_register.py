@@ -18,7 +18,12 @@ import cloudpickle
 # -----------------------------
 # Config
 # -----------------------------
-DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "data_raw.csv"
+DATA_PATH = Path(
+    os.getenv(
+        "DATA_PATH",
+        str(Path(__file__).resolve().parents[1] / "data" / "data_raw.csv"),
+    )
+)
 MODEL_NAME = os.getenv("MODEL_NAME", "fraud_detector")
 DECISION_THRESHOLD = float(os.getenv("DECISION_THRESHOLD", 0.640))
 

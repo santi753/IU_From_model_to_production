@@ -8,7 +8,11 @@ The instructions below assume you are using **Windows PowerShell**.
 
 - Python 3.8 or newer installed and added to your PATH
 - [Optional] Git for cloning the repository
-- The "Credit Card Fraud Detection" dataset (from Kaggle) saved as `data\data_raw.csv`
+- The "Credit Card Fraud Detection" dataset saved as `data\data_raw.csv`. You can either
+  - download it from Kaggle and place the file at that location, or
+  - run `git lfs pull` if you cloned the repository with Git LFS enabled.
+  - if you keep the file elsewhere, set the `DATA_PATH` environment variable
+    to the full path before running the training script.
 
 ## 1. Set up a virtual environment
 ```powershell
@@ -51,6 +55,7 @@ The response contains the predicted label and fraud probability.
 - `MODEL_NAME` – name of the registered model (`fraud_detector`)
 - `DECISION_THRESHOLD` – threshold for predicting fraud (0.640 by default)
 - `API_KEY` – key required when calling the API (`dev-key` by default)
+- `DATA_PATH` – path to `data_raw.csv` used for training (defaults to `data/data_raw.csv`)
 
 Set them in PowerShell using `$env:VAR = 'value'` before running the training script or API server.
 
