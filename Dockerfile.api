@@ -1,0 +1,28 @@
+# Use official Python runtime as base image
+# Match the local development environment version
+FROM python:3.12-slim
+
+# Set working directory in container
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the entire repository
+COPY . .
+
+# Expose port 8000 for the API
+EXPOSE 8000
+
+# Set default environment variables (can be overridden at runtime)
+ENV API_KEY=dev-key
+ENV MODEL_NAME=fraud_detector
+ENV MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+
+# Run the API using uvicorn
+# Using 0.0.0.0 inside container so it can receive connections
+# Port binding to localhost will be handled by docker-compose
+CMD ["uvicorn", "mlops.api_main:app", "--host", "0.0.0.0", "--port", "8000"]
