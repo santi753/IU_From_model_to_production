@@ -89,41 +89,48 @@ def test_end_to_end():
     
     try:
         # Import and run drift check
-        from mlops.drift_check import main
         import subprocess
         
-        # Run the script as a subprocess to test the CLI interface
+        # Run the script directly as a subprocess to test the CLI interface
+        script_path = Path(__file__).resolve().parents[1] / "mlops" / "drift_check.py"
         result = subprocess.run([
-            sys.executable, '-c', f'''
-import sys
-sys.path.append("{str(Path(__file__).resolve().parents[1])}")
-from mlops.drift_check import main
-import sys
-sys.argv = ["drift_check.py", "{new_path}", "--ref-data", "{ref_path}"]
-main()
-            '''
+            sys.executable, str(script_path), new_path, "--ref-data", ref_path
         ], capture_output=True, text=True)
         
+        # Check if subprocess ran successfully
+        if result.returncode != 0:
+            print(f"Script failed with return code {result.returncode}")
+            print(f"stdout: {result.stdout}")
+            print(f"stderr: {result.stderr}")
+            raise RuntimeError("Drift check script failed")
+        
         # Parse JSON output
+        stdout = result.stdout.strip()
+        if not stdout:
+            print("No output from drift check script")
+            print(f"stderr: {result.stderr}")
+            raise RuntimeError("No output from drift check script")
+            
         try:
-            drift_result = json.loads(result.stdout.strip())
+            drift_result = json.loads(stdout)
             print(f"Drift check result: {json.dumps(drift_result, indent=2)}")
             
             # Verify expected structure
-            assert drift_result['status'] == 'success'
+            assert drift_result['status'] == 'success', f"Expected success status, got: {drift_result.get('status')}"
             assert 'mean_psi' in drift_result
             assert 'drift_exceeded' in drift_result
             assert 'psi_by_column' in drift_result
             assert len(drift_result['psi_by_column']) > 0
             
-            print("✓ End-to-end test passed!")
+            print(f"✓ End-to-end test passed!")
             print(f"  Mean PSI: {drift_result['mean_psi']}")
             print(f"  Drift exceeded: {drift_result['drift_exceeded']}")
             print(f"  Columns checked: {drift_result['columns_checked']}")
             
-        except json.JSONDecodeError:
-            print(f"Failed to parse JSON output: {result.stdout}")
-            print(f"Error output: {result.stderr}")
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON output: '{stdout}'")
+            print(f"Error: {e}")
+            print(f"stderr: {result.stderr}")
             raise
             
     finally:

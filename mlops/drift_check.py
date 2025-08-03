@@ -67,7 +67,7 @@ def calculate_psi(expected, actual, buckets=10):
     # Calculate PSI: Σ((actual% - expected%) * ln(actual% / expected%))
     psi = sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct))
     
-    return float(psi)
+    return float(psi)  # Ensure we return a Python float, not numpy scalar
 
 def select_drift_columns(df):
     """
@@ -132,26 +132,26 @@ Examples:
             for col in common_cols:
                 try:
                     psi = calculate_psi(ref_df[col], new_df[col])
-                    psi_values[col] = round(psi, 4)
+                    psi_values[col] = round(float(psi), 4)  # Ensure Python float
                     if not np.isnan(psi) and not np.isinf(psi):
                         valid_psi_count += 1
                 except Exception as e:
                     psi_values[col] = f"error: {str(e)}"
             
             # Calculate mean PSI from valid values only
-            valid_psi_values = [v for v in psi_values.values() if isinstance(v, (int, float))]
-            mean_psi = np.mean(valid_psi_values) if valid_psi_values else 0.0
-            drift_exceeded = mean_psi > threshold
+            valid_psi_values = [float(v) for v in psi_values.values() if isinstance(v, (int, float))]
+            mean_psi = float(np.mean(valid_psi_values)) if valid_psi_values else 0.0
+            drift_exceeded = bool(mean_psi > threshold)
             
             result = {
                 "status": "success",
                 "mean_psi": round(float(mean_psi), 4),
-                "drift_exceeded": drift_exceeded,
-                "threshold": threshold,
-                "columns_checked": len(common_cols),
-                "valid_columns": valid_psi_count,
-                "ref_data_path": ref_data_path,
-                "new_data_path": args.new_data_path,
+                "drift_exceeded": bool(drift_exceeded),
+                "threshold": float(threshold),
+                "columns_checked": int(len(common_cols)),
+                "valid_columns": int(valid_psi_count),
+                "ref_data_path": str(ref_data_path),
+                "new_data_path": str(args.new_data_path),
                 "psi_by_column": psi_values
             }
     
@@ -161,9 +161,9 @@ Examples:
             "message": f"File not found: {str(e)}",
             "mean_psi": 0.0,
             "drift_exceeded": False,
-            "threshold": threshold,
-            "ref_data_path": ref_data_path,
-            "new_data_path": args.new_data_path
+            "threshold": float(threshold),
+            "ref_data_path": str(ref_data_path),
+            "new_data_path": str(args.new_data_path)
         }
     
     except Exception as e:
@@ -172,9 +172,9 @@ Examples:
             "message": f"Unexpected error: {str(e)}",
             "mean_psi": 0.0,
             "drift_exceeded": False,
-            "threshold": threshold,
-            "ref_data_path": ref_data_path,
-            "new_data_path": args.new_data_path
+            "threshold": float(threshold),
+            "ref_data_path": str(ref_data_path),
+            "new_data_path": str(args.new_data_path)
         }
     
     # Print one-line JSON summary to stdout
@@ -185,8 +185,8 @@ Examples:
     if github_output:
         try:
             with open(github_output, "a") as f:
-                f.write(f"drift_exceeded={str(result['drift_exceeded']).lower()}\n")
-                f.write(f"mean_psi={result['mean_psi']}\n")
+                f.write(f"drift_exceeded={str(bool(result['drift_exceeded'])).lower()}\n")
+                f.write(f"mean_psi={float(result['mean_psi'])}\n")
         except Exception:
             # Silently ignore GitHub Actions output errors
             pass
