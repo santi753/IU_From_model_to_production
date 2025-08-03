@@ -116,7 +116,7 @@ main()
             assert 'psi_by_column' in drift_result
             assert len(drift_result['psi_by_column']) > 0
             
-            print(f"✓ End-to-end test passed!")
+            print("✓ End-to-end test passed!")
             print(f"  Mean PSI: {drift_result['mean_psi']}")
             print(f"  Drift exceeded: {drift_result['drift_exceeded']}")
             print(f"  Columns checked: {drift_result['columns_checked']}")
