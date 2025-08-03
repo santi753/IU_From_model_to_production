@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+ENV/
+fraud_detection_env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# MLflow local artifacts (will use containerized MLflow server)
+mlruns/
+mlflow.db
+mlartifacts/
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Documentation
+README.md
+*.md
+
+# Temporary files
+*.log
+*.tmp
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

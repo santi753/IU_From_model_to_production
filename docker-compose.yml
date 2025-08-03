@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # MLflow tracking server
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    container_name: fraud-mlflow
+    ports:
+      # Bind to localhost only for security
+      - "127.0.0.1:5000:5000"
+    volumes:
+      # Persist MLflow data between container restarts
+      - mlflow-db:/mlflow/mlflow-db
+      - mlflow-artifacts:/mlflow/mlruns
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Training job - runs once to train and register model
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    container_name: fraud-train
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      # Override to use MLflow server instead of local SQLite
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MODEL_NAME: "fraud_detector"
+      DECISION_THRESHOLD: "0.640"
+    volumes:
+      # Mount data directory for training
+      - ./data:/app/data:ro
+
+  # API service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: fraud-api
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      # Bind to localhost only for security
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Override to use MLflow server instead of local SQLite
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MODEL_NAME: "fraud_detector"
+      API_KEY: "dev-key"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  mlflow-db:
+    driver: local
+  mlflow-artifacts:
+    driver: local
