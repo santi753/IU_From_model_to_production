@@ -20,24 +20,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # Training job - runs once to train and register model
-  train:
-    build:
-      context: .
-      dockerfile: Dockerfile.train
-    container_name: fraud-train
-    depends_on:
-      mlflow:
-        condition: service_healthy
-    environment:
-      # Override to use MLflow server instead of local SQLite
-      MLFLOW_TRACKING_URI: "http://mlflow:5000"
-      MODEL_NAME: "fraud_detector"
-      DECISION_THRESHOLD: "0.640"
-    volumes:
-      # Mount data directory for training
-      - ./data:/app/data:ro
+    networks:
+      - fraud-network
 
   # API service
   api:
@@ -62,9 +46,61 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - fraud-network
+
+  # Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fraud-prometheus
+    ports:
+      # Bind to localhost only for security
+      - "127.0.0.1:9090:9090"
+    volumes:
+      # Mount Prometheus configuration
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Persist Prometheus data
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - fraud-network
+
+  # Training job - only runs when explicitly called
+  # Run with: docker-compose run --rm train
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    container_name: fraud-train
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      # Override to use MLflow server instead of local SQLite
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MODEL_NAME: "fraud_detector"
+      DECISION_THRESHOLD: "0.640"
+    volumes:
+      # Mount data directory for training
+      - ./data:/app/data:ro
+    networks:
+      - fraud-network
+    profiles:
+      - training
+    # This service only runs when using --profile training or docker-compose run
 
 volumes:
   mlflow-db:
     driver: local
   mlflow-artifacts:
     driver: local
+  prometheus-data:
+    driver: local
+
+networks:
+  fraud-network:
+    driver: bridge
