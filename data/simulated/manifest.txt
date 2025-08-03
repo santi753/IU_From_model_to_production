@@ -1,0 +1,12 @@
+C:\mlops\iu_fraud\data\simulated\month_01.csv
+C:\mlops\iu_fraud\data\simulated\month_02.csv
+C:\mlops\iu_fraud\data\simulated\month_03.csv
+C:\mlops\iu_fraud\data\simulated\month_04.csv
+C:\mlops\iu_fraud\data\simulated\month_05.csv
+C:\mlops\iu_fraud\data\simulated\month_06.csv
+C:\mlops\iu_fraud\data\simulated\month_07.csv
+C:\mlops\iu_fraud\data\simulated\month_08.csv
+C:\mlops\iu_fraud\data\simulated\month_09.csv
+C:\mlops\iu_fraud\data\simulated\month_10.csv
+C:\mlops\iu_fraud\data\simulated\month_11.csv
+C:\mlops\iu_fraud\data\simulated\month_12.csv
