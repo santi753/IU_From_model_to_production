@@ -1,0 +1,310 @@
+name: MLOps Pipeline
+
+on:
+  # Daily schedule at 3 AM UTC (will determine if monthly or daily internally)
+  schedule:
+    - cron: '0 3 * * *'
+  
+  # Manual trigger with option to run demo
+  workflow_dispatch:
+    inputs:
+      run_demo:
+        description: 'Run full 12-month demonstration'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  mlops-pipeline:
+    runs-on: [self-hosted, linux, docker]
+    
+    env:
+      API_KEY: ${{ secrets.API_KEY || 'dev-key' }}
+      MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Install Python dependencies for scripts
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn mlflow
+      
+      - name: Start services with Docker Compose
+        run: |
+          echo "Starting MLflow, API, and Prometheus services..."
+          docker-compose up -d mlflow api prometheus
+      
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for services to become healthy..."
+          
+          # Wait for MLflow
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://127.0.0.1:5000/ > /dev/null 2>&1; then
+              echo "✓ MLflow is healthy"
+              break
+            fi
+            echo "Waiting for MLflow... (attempt $((attempt+1))/$max_attempts)"
+            sleep 5
+            ((attempt++))
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "MLflow failed to start"
+            docker-compose logs mlflow
+            exit 1
+          fi
+          
+          # Wait for API
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "✓ API is healthy"
+              break
+            fi
+            echo "Waiting for API... (attempt $((attempt+1))/$max_attempts)"
+            sleep 5
+            ((attempt++))
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "API failed to start"
+            docker-compose logs api
+            exit 1
+          fi
+          
+          echo "All services are healthy!"
+      
+      - name: Generate simulated data if needed
+        run: |
+          if [ ! -d "data/simulated" ] || [ -z "$(ls -A data/simulated 2>/dev/null)" ]; then
+            echo "Generating simulated monthly data..."
+            python mlops/simulate_monthly_data.py
+          else
+            echo "Simulated data already exists"
+          fi
+      
+      # Determine workflow trigger and set variables
+      - name: Determine workflow context
+        id: context
+        run: |
+          # Get current month (1-12) and day (1-31)
+          CURRENT_MONTH=$(date +%-m)
+          CURRENT_DAY=$(date +%-d)
+          echo "current_month=$CURRENT_MONTH" >> $GITHUB_OUTPUT
+          echo "current_day=$CURRENT_DAY" >> $GITHUB_OUTPUT
+          
+          # Determine trigger type
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Check if it's the first day of the month
+            if [ $CURRENT_DAY -eq 1 ]; then
+              echo "trigger=monthly" >> $GITHUB_OUTPUT
+              echo "📅 First day of month - monthly training scheduled"
+            else
+              echo "trigger=daily" >> $GITHUB_OUTPUT
+              echo "📊 Daily drift check scheduled"
+            fi
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ inputs.run_demo }}" == "true" ]]; then
+              echo "trigger=demo" >> $GITHUB_OUTPUT
+              echo "🎯 Demo mode selected"
+            else
+              echo "trigger=manual" >> $GITHUB_OUTPUT
+              echo "🔧 Manual run triggered"
+            fi
+          fi
+      
+      # Handle demo mode - loop through all 12 months
+      - name: Run 12-month demonstration
+        if: steps.context.outputs.trigger == 'demo'
+        run: |
+          echo "🎯 Running 12-month demonstration..."
+          
+          for month in {1..12}; do
+            echo ""
+            echo "===================================="
+            echo "Processing Month $month"
+            echo "===================================="
+            
+            MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $month)
+            
+            # Always run drift check for demo
+            echo "📊 Checking drift for month $month..."
+            drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
+            echo "Drift check result: $drift_output"
+            
+            # Parse drift result
+            drift_exceeded=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['drift_exceeded'])")
+            mean_psi=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['mean_psi'])")
+            
+            echo "Mean PSI: $mean_psi"
+            echo "Drift exceeded: $drift_exceeded"
+            
+            # Train model for this month
+            echo "🚀 Training model with month $month data..."
+            docker-compose run --rm \
+              -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+              -e DATA_PATH="/app/$MONTH_FILE" \
+              train
+            
+            # Hot-reload the API
+            echo "🔄 Reloading API with new model..."
+            reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
+              -H "x-api-key: $API_KEY" \
+              -H "Content-Type: application/json")
+            echo "Reload response: $reload_response"
+            
+            # Brief pause between months
+            sleep 2
+          done
+          
+          echo ""
+          echo "✅ 12-month demonstration complete!"
+      
+      # Handle daily drift check
+      - name: Daily drift check and conditional training
+        if: steps.context.outputs.trigger == 'daily'
+        run: |
+          MONTH=${{ steps.context.outputs.current_month }}
+          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
+          
+          echo "📊 Running daily drift check for month $MONTH..."
+          
+          # Run drift check
+          drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
+          echo "Drift check result: $drift_output"
+          
+          # Parse results
+          drift_exceeded=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['drift_exceeded'])")
+          mean_psi=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['mean_psi'])")
+          
+          echo "drift_exceeded=$drift_exceeded" >> $GITHUB_ENV
+          echo "mean_psi=$mean_psi" >> $GITHUB_ENV
+          
+          if [[ "$drift_exceeded" == "True" ]]; then
+            echo "⚠️ Drift threshold exceeded! Mean PSI: $mean_psi"
+            echo "🚀 Triggering model retraining..."
+            
+            # Train with drift-detected data
+            docker-compose run --rm \
+              -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+              -e DATA_PATH="/app/$MONTH_FILE" \
+              train
+            
+            # Hot-reload the API
+            echo "🔄 Reloading API with new model..."
+            reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
+              -H "x-api-key: $API_KEY" \
+              -H "Content-Type: application/json")
+            echo "Reload response: $reload_response"
+          else
+            echo "✅ Drift within threshold. Mean PSI: $mean_psi"
+            echo "No retraining needed."
+          fi
+      
+      # Handle monthly scheduled training
+      - name: Monthly scheduled training
+        if: steps.context.outputs.trigger == 'monthly'
+        run: |
+          MONTH=${{ steps.context.outputs.current_month }}
+          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
+          
+          echo "📅 Running monthly scheduled training for month $MONTH..."
+          
+          # Always train on monthly schedule
+          docker-compose run --rm \
+            -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+            -e DATA_PATH="/app/$MONTH_FILE" \
+            train
+          
+          # Hot-reload the API
+          echo "🔄 Reloading API with new model..."
+          reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
+            -H "x-api-key: $API_KEY" \
+            -H "Content-Type: application/json")
+          echo "Reload response: $reload_response"
+      
+      # Handle manual trigger (current month)
+      - name: Manual training
+        if: steps.context.outputs.trigger == 'manual'
+        run: |
+          MONTH=${{ steps.context.outputs.current_month }}
+          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
+          
+          echo "🔧 Running manual training for month $MONTH..."
+          
+          # Check drift first
+          drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
+          echo "Drift check result: $drift_output"
+          
+          # Train model
+          docker-compose run --rm \
+            -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
+            -e DATA_PATH="/app/$MONTH_FILE" \
+            train
+          
+          # Hot-reload the API
+          echo "🔄 Reloading API with new model..."
+          reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
+            -H "x-api-key: $API_KEY" \
+            -H "Content-Type: application/json")
+          echo "Reload response: $reload_response"
+      
+      # Test the API after any training
+      - name: Test API endpoint
+        if: always()
+        run: |
+          echo "🧪 Testing API predictions..."
+          
+          # Test prediction endpoint
+          test_response=$(curl -s -X POST http://127.0.0.1:8000/predict \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $API_KEY" \
+            -d '{
+              "Time": 0,
+              "Amount": 149.62,
+              "V1": -1.36, "V2": -0.07, "V3": 2.54, "V4": 1.38,
+              "V5": -0.34, "V6": 0.46, "V7": 0.24, "V8": 0.10,
+              "V9": 0.36, "V10": 0.09, "V11": -0.55, "V12": -0.62,
+              "V13": -0.99, "V14": -0.31, "V15": 1.47, "V16": -0.47,
+              "V17": 0.21, "V18": 0.03, "V19": 0.40, "V20": 0.25,
+              "V21": -0.02, "V22": 0.28, "V23": -0.11, "V24": 0.07,
+              "V25": 0.13, "V26": -0.19, "V27": 0.13, "V28": -0.02
+            }')
+          
+          echo "API response: $test_response"
+          
+          # Check model info
+          model_info=$(curl -s http://127.0.0.1:8000/model-info \
+            -H "x-api-key: $API_KEY")
+          echo "Model info: $model_info"
+      
+      # Collect metrics
+      - name: Collect Prometheus metrics
+        if: always()
+        run: |
+          echo "📊 Collecting metrics..."
+          metrics=$(curl -s http://127.0.0.1:8000/metrics | grep -E "fraud_api|model_version" | head -20)
+          echo "$metrics"
+      
+      # Clean up on failure
+      - name: Clean up services
+        if: always()
+        run: |
+          echo "🧹 Cleaning up services..."
+          docker-compose logs --tail=50
+          docker-compose down
