@@ -244,7 +244,10 @@ def main():
     manifest_path = Path(args.output_dir) / "manifest.txt"
     with open(manifest_path, "w") as f:
         for path in generated_paths:
-            f.write(f"{path}\n")
+            # Convert to relative path from project root for cross-platform compatibility
+            relative_path = Path(path).relative_to(project_root)
+            # Use forward slashes for cross-platform compatibility
+            f.write(f"{relative_path.as_posix()}\n")
     print(f"\nManifest written to: {manifest_path}")
     
     # Test drift detection on a sample month
