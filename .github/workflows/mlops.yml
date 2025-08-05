@@ -22,7 +22,7 @@ jobs:
     runs-on: [self-hosted, linux, docker]
     
     env:
-      API_KEY: ${{ secrets.API_KEY }}
+      API_KEY: ${{ secrets.API_KEY || 'dev-key' }}
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
     
     steps:
