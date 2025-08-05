@@ -19,11 +19,12 @@ on:
 
 jobs:
   mlops-pipeline:
-    runs-on: [self-hosted, linux, docker]
+    runs-on: ubuntu-latest  # Changed from [self-hosted, linux, docker]
     
     env:
-      API_KEY: ${{ secrets.API_KEY || 'dev-key' }}
+      API_KEY: ${{ secrets.API_KEY || 'dev-key' }}  # Use secret if available, fallback to dev-key
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+      DOCKER_BUILDKIT: 1  # Enable BuildKit for faster Docker builds
     
     steps:
       - name: Checkout repository
@@ -31,11 +32,6 @@ jobs:
         with:
           lfs: true
           
-      - name: Set API key for local dev
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          echo "API_KEY=dev-key" >> $GITHUB_ENV
-      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -306,7 +302,18 @@ jobs:
           metrics=$(curl -s http://127.0.0.1:8000/metrics | grep -E "fraud_api|model_version" | head -20)
           echo "$metrics"
       
-      # Clean up on failure
+      # Upload logs on failure
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-${{ github.run_number }}
+          path: |
+            mlruns/
+            *.log
+          retention-days: 7
+      
+      # Clean up services
       - name: Clean up services
         if: always()
         run: |
