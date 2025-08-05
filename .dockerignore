@@ -31,8 +31,6 @@ mlartifacts/
 
 # Docker
 .dockerignore
-Dockerfile*
-docker-compose*.yml
 
 # Documentation
 README.md
