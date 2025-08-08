@@ -1,4 +1,4 @@
-name: MLOps Pipeline new
+name: MLOps Pipeline
 
 on:
   # Daily schedule at 3 AM UTC (will determine if monthly or daily internally)
@@ -65,12 +65,34 @@ jobs:
           echo "Starting MLflow, API, and Prometheus services..."
           docker-compose up -d mlflow api prometheus
       
+      # 🔧 DEBUG: Check what's happening immediately after startup
+      - name: Debug container startup
+        run: |
+          echo "🔍 Checking initial container status..."
+          docker-compose ps
+          
+          echo ""
+          echo "🔍 Waiting 10 seconds for containers to initialize..."
+          sleep 10
+          
+          echo ""
+          echo "🔍 Container status after 10 seconds..."
+          docker-compose ps
+          
+          echo ""
+          echo "🔍 API container logs..."
+          docker-compose logs api
+          
+          echo ""
+          echo "🔍 MLflow container logs..."
+          docker-compose logs mlflow | tail -20
+      
       - name: Wait for services to be healthy
         run: |
           echo "Waiting for services to become healthy..."
           
           # Wait for MLflow
-          max_attempts=60  # Increased from 30
+          max_attempts=60
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
             if curl -f http://127.0.0.1:5000/ > /dev/null 2>&1; then
@@ -83,30 +105,58 @@ jobs:
           done
           
           if [ $attempt -eq $max_attempts ]; then
-            echo "MLflow failed to start"
+            echo "❌ MLflow failed to start"
+            echo "MLflow logs:"
             docker-compose logs mlflow
             exit 1
           fi
           
-          # Wait for API
+          # Wait for API with better debugging
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
+            # Check if API container is still running
+            if ! docker-compose ps api | grep -q "Up"; then
+              echo "❌ API container is not running!"
+              echo "API container status:"
+              docker-compose ps api
+              echo "API logs:"
+              docker-compose logs api
+              exit 1
+            fi
+            
+            # Try to connect to API
+            echo "Attempting to connect to API... (attempt $((attempt+1))/$max_attempts)"
             if curl -f http://127.0.0.1:8000/health > /dev/null 2>&1; then
               echo "✓ API is healthy"
               break
             fi
-            echo "Waiting for API... (attempt $((attempt+1))/$max_attempts)"
+            
+            # Show what we got instead
+            echo "API response (if any):"
+            curl -s http://127.0.0.1:8000/health || echo "No response"
+            
             sleep 5
             ((attempt++))
+            
+            # Show logs every 5 attempts
+            if [ $((attempt % 5)) -eq 0 ]; then
+              echo "API logs (attempt $attempt):"
+              docker-compose logs api | tail -10
+            fi
           done
           
           if [ $attempt -eq $max_attempts ]; then
-            echo "API failed to start"
+            echo "❌ API failed to become healthy"
+            echo "Final API logs:"
             docker-compose logs api
+            echo "Container status:"
+            docker-compose ps
+            echo "Port check:"
+            netstat -tulpn | grep :8000 || echo "Port 8000 not in use"
             exit 1
           fi
           
-          echo "All services are healthy!"
+          echo "✅ All services are healthy!"
       
       - name: Generate simulated data if needed
         run: |
