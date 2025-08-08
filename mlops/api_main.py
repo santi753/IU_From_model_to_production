@@ -21,35 +21,37 @@ model = None
 model_version = None
 
 def load_production_model():
-    """Load the Production model from MLflow registry"""
+    """Load the Production model from MLflow registry using alias system"""
     global model, model_version
     try:
-        # Try to load using alias first
-        uri = f"models:/{MODEL_NAME}/Production"
+        # Use alias-based URI instead of stage-based
+        uri = f"models:/{MODEL_NAME}@Production"
         model = mlflow.pyfunc.load_model(uri)
-    except Exception:
-        # Fallback: load the latest version
-        uri = f"models:/{MODEL_NAME}/latest"
-        model = mlflow.pyfunc.load_model(uri)
-    
-    # best-effort: get version from client (optional)
-    try:
+        
+        # Get version from alias system
         client = mlflow.tracking.MlflowClient()
-        # Get the latest version
-        latest_versions = client.get_latest_versions(MODEL_NAME)
-        if latest_versions:
-            model_version = latest_versions[0].version
-        else:
-            model_version = "unknown"
+        model_version_info = client.get_model_version_by_alias(MODEL_NAME, "Production")
+        model_version = model_version_info.version
+        
         # Update Prometheus gauge with numeric version
         try:
             model_version_gauge.set(float(model_version))
         except ValueError:
             # If version is not numeric, set to 0
             model_version_gauge.set(0)
-    except Exception:
+            
+        print(f"Successfully loaded model {MODEL_NAME} version {model_version} from Production alias")
+        
+    except mlflow.exceptions.MlflowException as e:
+        print(f"MLflow error loading model: {e}")
         model_version = "unknown"
         model_version_gauge.set(0)
+        raise
+    except Exception as e:
+        print(f"Unexpected error loading model: {e}")
+        model_version = "unknown"
+        model_version_gauge.set(0)
+        raise
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,7 +95,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(default=None)):
     return True
 
 # ------------- Schemas -------------
-# 30 original columns (unscaled Time & Amount)
+# 30 total columns: Time, Amount, and V1-V28
 FEATURES = ["Time", "Amount"] + [f"V{i}" for i in range(1, 29)]
 
 class Transaction(BaseModel):
@@ -138,6 +140,7 @@ def predict(
     payload: Union[Transaction, BatchRequest],
     auth_ok: bool = Depends(verify_api_key)
 ):
+    """Unified prediction endpoint for single or batch transactions"""
     try:
         # Normalize to DataFrame
         if isinstance(payload, Transaction):
@@ -165,53 +168,23 @@ def predict(
             prediction_count.labels(label=str(label)).inc()
         
         results = preds.to_dict(orient="records")
-        return {"model_name": MODEL_NAME, "model_version": model_version, "predictions": results}
+        
+        response_data = {
+            "model_name": MODEL_NAME, 
+            "model_version": model_version, 
+            "predictions": results
+        }
+        
+        # Add batch size for batch requests
+        if isinstance(payload, BatchRequest):
+            response_data["batch_size"] = len(results)
+            
+        return response_data
     
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
-
-@app.post("/predict/batch")
-def predict_batch(
-    payload: BatchRequest,
-    auth_ok: bool = Depends(verify_api_key)
-):
-    """Batch prediction endpoint for multiple transactions"""
-    try:
-        df = pd.DataFrame([r.dict() for r in payload.records])
-
-        # Validate required features
-        missing_features = [feat for feat in FEATURES if feat not in df.columns]
-        if missing_features:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Missing required features: {missing_features}"
-            )
-
-        # Ensure column order
-        df = df[FEATURES]
-
-        # Make prediction
-        preds = model.predict(df)  # returns DataFrame with probability + label
-        preds = preds.rename(columns={"label": "predicted_label", "probability": "fraud_probability"})
-        
-        # Count predictions by label
-        for label in preds["predicted_label"]:
-            prediction_count.labels(label=str(label)).inc()
-        
-        results = preds.to_dict(orient="records")
-        return {
-            "model_name": MODEL_NAME, 
-            "model_version": model_version, 
-            "predictions": results,
-            "batch_size": len(results)
-        }
-    
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {str(e)}")
 
 @app.get("/model-info")
 def model_info(auth_ok: bool = Depends(verify_api_key)):
