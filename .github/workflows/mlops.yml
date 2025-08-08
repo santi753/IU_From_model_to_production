@@ -22,11 +22,14 @@ jobs:
     runs-on: ubuntu-latest  # Changed from [self-hosted, linux, docker]
     
     env:
-      API_KEY: ${{ secrets.API_KEY || 'dev-key' }}  # Use secret if available, fallback to dev-key
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       DOCKER_BUILDKIT: 1  # Enable BuildKit for faster Docker builds
     
     steps:
+      - name: Set API key
+        run: |
+          echo "API_KEY=dev-key" >> $GITHUB_ENV
+      
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -114,7 +117,7 @@ jobs:
             # Check if it's the first day of the month
             if [ $CURRENT_DAY -eq 1 ]; then
               echo "trigger=monthly" >> $GITHUB_OUTPUT
-              echo "📅 First day of month - monthly training scheduled"
+              echo "�� First day of month - monthly training scheduled"
             else
               echo "trigger=daily" >> $GITHUB_OUTPUT
               echo "📊 Daily drift check scheduled"
@@ -122,7 +125,7 @@ jobs:
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             if [[ "${{ inputs.run_demo }}" == "true" ]]; then
               echo "trigger=demo" >> $GITHUB_OUTPUT
-              echo "🎯 Demo mode selected"
+              echo "�� Demo mode selected"
             else
               echo "trigger=manual" >> $GITHUB_OUTPUT
               echo "🔧 Manual run triggered"
@@ -144,7 +147,7 @@ jobs:
             MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $month)
             
             # Always run drift check for demo
-            echo "📊 Checking drift for month $month..."
+            echo "�� Checking drift for month $month..."
             drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
             echo "Drift check result: $drift_output"
             
@@ -163,7 +166,7 @@ jobs:
               train
             
             # Hot-reload the API
-            echo "🔄 Reloading API with new model..."
+            echo "�� Reloading API with new model..."
             reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json")
@@ -207,7 +210,7 @@ jobs:
               train
             
             # Hot-reload the API
-            echo "🔄 Reloading API with new model..."
+            echo "�� Reloading API with new model..."
             reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json")
@@ -233,7 +236,7 @@ jobs:
             train
           
           # Hot-reload the API
-          echo "🔄 Reloading API with new model..."
+          echo "�� Reloading API with new model..."
           reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
             -H "x-api-key: $API_KEY" \
             -H "Content-Type: application/json")
@@ -259,7 +262,7 @@ jobs:
             train
           
           # Hot-reload the API
-          echo "🔄 Reloading API with new model..."
+          echo "�� Reloading API with new model..."
           reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
             -H "x-api-key: $API_KEY" \
             -H "Content-Type: application/json")
@@ -298,7 +301,7 @@ jobs:
       - name: Collect Prometheus metrics
         if: always()
         run: |
-          echo "📊 Collecting metrics..."
+          echo "�� Collecting metrics..."
           metrics=$(curl -s http://127.0.0.1:8000/metrics | grep -E "fraud_api|model_version" | head -20)
           echo "$metrics"
       

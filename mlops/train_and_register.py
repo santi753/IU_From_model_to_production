@@ -2,7 +2,6 @@
 import os
 from pathlib import Path
 import json
-import numpy as np
 import pandas as pd
 from typing import List
 
@@ -173,7 +172,7 @@ def main():
     # -------------------------
     mlflow.set_experiment("fraud_detection")
 
-    with mlflow.start_run() as run:
+    with mlflow.start_run():
         # metrics you might want to log
         mlflow.log_param("algorithm", "RandomForestClassifier")
         mlflow.log_param("threshold", DECISION_THRESHOLD)
