@@ -4,6 +4,7 @@ import time
 import mlflow
 import mlflow.pyfunc
 import pandas as pd
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union
@@ -15,7 +16,40 @@ TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 
 mlflow.set_tracking_uri(TRACKING_URI)
 
-app = FastAPI(title="Fraud Detection API", version="1.1.0")
+# ------------- Model Management -------------
+model = None
+model_version = None
+
+def load_production_model():
+    """Load the Production model from MLflow registry"""
+    global model, model_version
+    uri = f"models:/{MODEL_NAME}/Production"
+    model = mlflow.pyfunc.load_model(uri)
+    # best-effort: get version from client (optional)
+    try:
+        client = mlflow.tracking.MlflowClient()
+        mv = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
+        model_version = mv.version
+        # Update Prometheus gauge with numeric version
+        try:
+            model_version_gauge.set(float(model_version))
+        except ValueError:
+            # If version is not numeric, set to 0
+            model_version_gauge.set(0)
+    except Exception:
+        model_version = "unknown"
+        model_version_gauge.set(0)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    load_production_model()
+    print(f"Loaded model {MODEL_NAME} version {model_version}")
+    yield
+    # Shutdown
+    pass
+
+app = FastAPI(title="Fraud Detection API", version="1.1.0", lifespan=lifespan)
 
 # ------------- Prometheus Metrics -------------
 request_count = Counter(
@@ -63,30 +97,6 @@ class Transaction(BaseModel):
 class BatchRequest(BaseModel):
     records: List[Transaction] = Field(..., description="List of transactions")
 
-# ------------- Model Management -------------
-model = None
-model_version = None
-
-def load_production_model():
-    """Load the Production model from MLflow registry"""
-    global model, model_version
-    uri = f"models:/{MODEL_NAME}/Production"
-    model = mlflow.pyfunc.load_model(uri)
-    # best-effort: get version from client (optional)
-    try:
-        client = mlflow.tracking.MlflowClient()
-        mv = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
-        model_version = mv.version
-        # Update Prometheus gauge with numeric version
-        try:
-            model_version_gauge.set(float(model_version))
-        except ValueError:
-            # If version is not numeric, set to 0
-            model_version_gauge.set(0)
-    except Exception:
-        model_version = "unknown"
-        model_version_gauge.set(0)
-
 # ------------- Middleware for metrics -------------
 @app.middleware("http")
 async def track_requests(request: Request, call_next):
@@ -107,12 +117,6 @@ async def track_requests(request: Request, call_next):
     
     return response
 
-# ------------- Load model on startup -------------
-@app.on_event("startup")
-def startup_event():
-    load_production_model()
-    print(f"Loaded model {MODEL_NAME} version {model_version}")
-
 # ------------- Endpoints -------------
 @app.get("/health")
 def health():
@@ -123,24 +127,80 @@ def predict(
     payload: Union[Transaction, BatchRequest],
     auth_ok: bool = Depends(verify_api_key)
 ):
-    # Normalize to DataFrame
-    if isinstance(payload, Transaction):
-        df = pd.DataFrame([payload.dict()])
-    else:
+    try:
+        # Normalize to DataFrame
+        if isinstance(payload, Transaction):
+            df = pd.DataFrame([payload.dict()])
+        else:
+            df = pd.DataFrame([r.dict() for r in payload.records])
+
+        # Validate required features
+        missing_features = [feat for feat in FEATURES if feat not in df.columns]
+        if missing_features:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required features: {missing_features}"
+            )
+
+        # Ensure column order
+        df = df[FEATURES]
+
+        # Make prediction
+        preds = model.predict(df)  # returns DataFrame with probability + label
+        preds = preds.rename(columns={"label": "predicted_label", "probability": "fraud_probability"})
+        
+        # Count predictions by label
+        for label in preds["predicted_label"]:
+            prediction_count.labels(label=str(label)).inc()
+        
+        results = preds.to_dict(orient="records")
+        return {"model_name": MODEL_NAME, "model_version": model_version, "predictions": results}
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+@app.post("/predict/batch")
+def predict_batch(
+    payload: BatchRequest,
+    auth_ok: bool = Depends(verify_api_key)
+):
+    """Batch prediction endpoint for multiple transactions"""
+    try:
         df = pd.DataFrame([r.dict() for r in payload.records])
 
-    # Ensure column order
-    df = df[FEATURES]
+        # Validate required features
+        missing_features = [feat for feat in FEATURES if feat not in df.columns]
+        if missing_features:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required features: {missing_features}"
+            )
 
-    preds = model.predict(df)  # returns DataFrame with probability + label
-    preds = preds.rename(columns={"label": "predicted_label", "probability": "fraud_probability"})
+        # Ensure column order
+        df = df[FEATURES]
+
+        # Make prediction
+        preds = model.predict(df)  # returns DataFrame with probability + label
+        preds = preds.rename(columns={"label": "predicted_label", "probability": "fraud_probability"})
+        
+        # Count predictions by label
+        for label in preds["predicted_label"]:
+            prediction_count.labels(label=str(label)).inc()
+        
+        results = preds.to_dict(orient="records")
+        return {
+            "model_name": MODEL_NAME, 
+            "model_version": model_version, 
+            "predictions": results,
+            "batch_size": len(results)
+        }
     
-    # Count predictions by label
-    for label in preds["predicted_label"]:
-        prediction_count.labels(label=str(label)).inc()
-    
-    results = preds.to_dict(orient="records")
-    return {"model_name": MODEL_NAME, "model_version": model_version, "predictions": results}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {str(e)}")
 
 @app.get("/model-info")
 def model_info(auth_ok: bool = Depends(verify_api_key)):

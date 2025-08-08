@@ -77,22 +77,30 @@ class FraudModelWrapper(mlflow.pyfunc.PythonModel):
         X["V3_V4"] = X["V3"] * X["V4"]
         
         # Ensure columns are in the exact order the model expects
+        # This is critical for the model to work correctly
+        missing_trained = [c for c in self.trained_features if c not in X.columns]
+        if missing_trained:
+            raise ValueError(f"Missing trained features after preprocessing: {missing_trained}")
+        
         X = X[self.trained_features]
         
         return X
 
     def predict(self, context, model_input):
-        if isinstance(model_input, dict):  # single row as dict
-            model_input = pd.DataFrame([model_input])
-        elif isinstance(model_input, list):
-            model_input = pd.DataFrame(model_input)
-        elif not isinstance(model_input, pd.DataFrame):
-            model_input = pd.DataFrame(model_input)
+        try:
+            if isinstance(model_input, dict):  # single row as dict
+                model_input = pd.DataFrame([model_input])
+            elif isinstance(model_input, list):
+                model_input = pd.DataFrame(model_input)
+            elif not isinstance(model_input, pd.DataFrame):
+                model_input = pd.DataFrame(model_input)
 
-        X = self._preprocess(model_input)
-        proba = self.clf.predict_proba(X)[:, 1]
-        label = (proba >= self.threshold).astype(int)
-        return pd.DataFrame({"probability": proba, "label": label})
+            X = self._preprocess(model_input)
+            proba = self.clf.predict_proba(X)[:, 1]
+            label = (proba >= self.threshold).astype(int)
+            return pd.DataFrame({"probability": proba, "label": label})
+        except Exception as e:
+            raise ValueError(f"Prediction failed: {str(e)}")
 
 
 def main():
@@ -230,16 +238,19 @@ def main():
             latest_versions = client.get_latest_versions(MODEL_NAME)
             version = latest_versions[-1].version if latest_versions else "1"
 
-        # Transition to Production
+        # Use modern approach instead of deprecated transition_model_version_stage
         client = mlflow.tracking.MlflowClient()
-        client.transition_model_version_stage(
-            name=MODEL_NAME,
-            version=str(version),
-            stage="Production",
-            archive_existing_versions=True,
-        )
-
-        print(f"Model registered as {MODEL_NAME} v{version} and promoted to Production.")
+        try:
+            # Set the "Production" alias to the new version
+            client.set_registered_model_alias(
+                name=MODEL_NAME,
+                alias="Production",
+                version=str(version)
+            )
+            print(f"Model registered as {MODEL_NAME} v{version} and promoted to Production.")
+        except Exception as e:
+            print(f"Warning: Could not set Production alias: {e}")
+            print(f"Model registered as {MODEL_NAME} v{version}")
 
 
 if __name__ == "__main__":

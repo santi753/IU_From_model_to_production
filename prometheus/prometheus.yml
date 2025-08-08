@@ -29,7 +29,8 @@ scrape_configs:
     scheme: http
     
     static_configs:
-      - targets: ['localhost:8000']
+      # Use container name for Docker Compose, fallback to localhost for local development
+      - targets: ['api:8000', 'localhost:8000']
         labels:
           service: 'fraud-detection'
           environment: 'development'
