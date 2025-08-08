@@ -41,23 +41,31 @@ def load_production_model():
             model_version_gauge.set(0)
             
         print(f"Successfully loaded model {MODEL_NAME} version {model_version} from Production alias")
+        return True
         
     except mlflow.exceptions.MlflowException as e:
         print(f"MLflow error loading model: {e}")
-        model_version = "unknown"
-        model_version_gauge.set(0)
-        raise
+        if "not found" in str(e).lower() or "alias" in str(e).lower():
+            print(f"No Production model found for {MODEL_NAME}. API will start without a model.")
+            model_version = "none"
+            model_version_gauge.set(0)
+            return False
+        else:
+            raise
     except Exception as e:
         print(f"Unexpected error loading model: {e}")
-        model_version = "unknown"
+        model_version = "error"
         model_version_gauge.set(0)
-        raise
+        return False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    load_production_model()
-    print(f"Loaded model {MODEL_NAME} version {model_version}")
+    # Startup - try to load model but don't fail if it doesn't exist
+    model_loaded = load_production_model()
+    if model_loaded:
+        print(f"✅ API started with model {MODEL_NAME} version {model_version}")
+    else:
+        print(f"⚠️ API started without a model. Use /reload endpoint after training.")
     yield
     # Shutdown
     pass
@@ -133,7 +141,14 @@ async def track_requests(request: Request, call_next):
 # ------------- Endpoints -------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_name": MODEL_NAME, "model_version": model_version}
+    """Health check endpoint - works even without a model loaded"""
+    status = "ok" if model is not None else "no_model"
+    return {
+        "status": status, 
+        "model_name": MODEL_NAME, 
+        "model_version": model_version or "none",
+        "model_loaded": model is not None
+    }
 
 @app.post("/predict")
 def predict(
@@ -141,6 +156,14 @@ def predict(
     auth_ok: bool = Depends(verify_api_key)
 ):
     """Unified prediction endpoint for single or batch transactions"""
+    
+    # Check if model is loaded
+    if model is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="No model is currently loaded. Please train a model first and use the /reload endpoint."
+        )
+    
     try:
         # Normalize to DataFrame
         if isinstance(payload, Transaction):
@@ -188,21 +211,36 @@ def predict(
 
 @app.get("/model-info")
 def model_info(auth_ok: bool = Depends(verify_api_key)):
-    return {"model_name": MODEL_NAME, "model_version": model_version, "features": FEATURES}
+    return {
+        "model_name": MODEL_NAME, 
+        "model_version": model_version or "none", 
+        "features": FEATURES,
+        "model_loaded": model is not None
+    }
 
 @app.post("/reload")
 def reload_model(auth_ok: bool = Depends(verify_api_key)):
     """Hot-reload the Production model from MLflow"""
     try:
         old_version = model_version
-        load_production_model()
-        return {
-            "status": "success",
-            "model_name": MODEL_NAME,
-            "old_version": old_version,
-            "new_version": model_version,
-            "message": f"Model reloaded successfully from {old_version} to {model_version}"
-        }
+        model_loaded = load_production_model()
+        
+        if model_loaded:
+            return {
+                "status": "success",
+                "model_name": MODEL_NAME,
+                "old_version": old_version or "none",
+                "new_version": model_version,
+                "message": f"Model reloaded successfully from {old_version or 'none'} to {model_version}"
+            }
+        else:
+            return {
+                "status": "warning",
+                "model_name": MODEL_NAME,
+                "old_version": old_version or "none", 
+                "new_version": "none",
+                "message": "No Production model found to load"
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reload model: {str(e)}")
 
