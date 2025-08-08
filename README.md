@@ -64,3 +64,10 @@ Set them in PowerShell using `$env:VAR = 'value'` before running the training sc
 - $env:MLFLOW_TRACKING_URI = "sqlite:///mlflow.db"
 - $env:API_KEY = "dev-key"
 - mlflow ui --backend-store-uri sqlite:///mlflow.db
+
+
+## API Request Metrics:
+fraud_api_requests_total
+fraud_api_request_duration_seconds
+fraud_api_predictions_total
+fraud_api_model_version
