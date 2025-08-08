@@ -1,4 +1,4 @@
-name: MLOps Pipeline
+name: MLOps Pipeline new
 
 on:
   # Daily schedule at 3 AM UTC (will determine if monthly or daily internally)
@@ -19,7 +19,7 @@ on:
 
 jobs:
   mlops-pipeline:
-    runs-on: ubuntu-latest  # Changed from [self-hosted, linux, docker]
+    runs-on: ubuntu-latest
     
     env:
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
@@ -45,6 +45,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn mlflow
       
+      # 🔧 FIX: Install Docker Compose or use docker compose
+      - name: Install Docker Compose (if needed)
+        run: |
+          # Check if docker-compose exists, if not, create an alias
+          if ! command -v docker-compose &> /dev/null; then
+            echo "docker-compose not found, using 'docker compose' instead"
+            sudo ln -sf $(which docker) /usr/local/bin/docker-compose-original
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/docker-compose
+            echo 'docker compose "$@"' | sudo tee -a /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          # Verify it works
+          docker-compose --version
+      
       - name: Start services with Docker Compose
         run: |
           echo "Starting MLflow, API, and Prometheus services..."
@@ -55,7 +70,7 @@ jobs:
           echo "Waiting for services to become healthy..."
           
           # Wait for MLflow
-          max_attempts=30
+          max_attempts=60  # Increased from 30
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
             if curl -f http://127.0.0.1:5000/ > /dev/null 2>&1; then
@@ -117,7 +132,7 @@ jobs:
             # Check if it's the first day of the month
             if [ $CURRENT_DAY -eq 1 ]; then
               echo "trigger=monthly" >> $GITHUB_OUTPUT
-              echo "�� First day of month - monthly training scheduled"
+              echo "🗓️ First day of month - monthly training scheduled"
             else
               echo "trigger=daily" >> $GITHUB_OUTPUT
               echo "📊 Daily drift check scheduled"
@@ -125,7 +140,7 @@ jobs:
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             if [[ "${{ inputs.run_demo }}" == "true" ]]; then
               echo "trigger=demo" >> $GITHUB_OUTPUT
-              echo "�� Demo mode selected"
+              echo "🎯 Demo mode selected"
             else
               echo "trigger=manual" >> $GITHUB_OUTPUT
               echo "🔧 Manual run triggered"
@@ -147,7 +162,7 @@ jobs:
             MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $month)
             
             # Always run drift check for demo
-            echo "�� Checking drift for month $month..."
+            echo "🔍 Checking drift for month $month..."
             drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
             echo "Drift check result: $drift_output"
             
@@ -166,7 +181,7 @@ jobs:
               train
             
             # Hot-reload the API
-            echo "�� Reloading API with new model..."
+            echo "🔄 Reloading API with new model..."
             reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json")
@@ -210,7 +225,7 @@ jobs:
               train
             
             # Hot-reload the API
-            echo "�� Reloading API with new model..."
+            echo "🔄 Reloading API with new model..."
             reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json")
@@ -236,7 +251,7 @@ jobs:
             train
           
           # Hot-reload the API
-          echo "�� Reloading API with new model..."
+          echo "🔄 Reloading API with new model..."
           reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
             -H "x-api-key: $API_KEY" \
             -H "Content-Type: application/json")
@@ -262,7 +277,7 @@ jobs:
             train
           
           # Hot-reload the API
-          echo "�� Reloading API with new model..."
+          echo "🔄 Reloading API with new model..."
           reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
             -H "x-api-key: $API_KEY" \
             -H "Content-Type: application/json")
@@ -301,7 +316,7 @@ jobs:
       - name: Collect Prometheus metrics
         if: always()
         run: |
-          echo "�� Collecting metrics..."
+          echo "📊 Collecting metrics..."
           metrics=$(curl -s http://127.0.0.1:8000/metrics | grep -E "fraud_api|model_version" | head -20)
           echo "$metrics"
       
