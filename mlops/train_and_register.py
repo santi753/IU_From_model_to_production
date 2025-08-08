@@ -301,7 +301,7 @@ def main():
             print(f"⚠️  Warning: Could not set Production alias: {e}")
             print(f"Model registered as {MODEL_NAME} v{version} but not promoted to Production")
             
-        print(f"Training pipeline completed successfully!")
+        print("Training pipeline completed successfully!")
         print(f"Model URI: models:/{MODEL_NAME}@Production")
 
 
