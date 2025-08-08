@@ -23,13 +23,24 @@ model_version = None
 def load_production_model():
     """Load the Production model from MLflow registry"""
     global model, model_version
-    uri = f"models:/{MODEL_NAME}/Production"
-    model = mlflow.pyfunc.load_model(uri)
+    try:
+        # Try to load using alias first
+        uri = f"models:/{MODEL_NAME}/Production"
+        model = mlflow.pyfunc.load_model(uri)
+    except Exception:
+        # Fallback: load the latest version
+        uri = f"models:/{MODEL_NAME}/latest"
+        model = mlflow.pyfunc.load_model(uri)
+    
     # best-effort: get version from client (optional)
     try:
         client = mlflow.tracking.MlflowClient()
-        mv = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
-        model_version = mv.version
+        # Get the latest version
+        latest_versions = client.get_latest_versions(MODEL_NAME)
+        if latest_versions:
+            model_version = latest_versions[0].version
+        else:
+            model_version = "unknown"
         # Update Prometheus gauge with numeric version
         try:
             model_version_gauge.set(float(model_version))

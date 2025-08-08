@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   # MLflow tracking server
@@ -15,7 +15,7 @@ services:
       - mlflow-db:/mlflow/mlflow-db
       - mlflow-artifacts:/mlflow/mlruns
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -41,7 +41,7 @@ services:
       MODEL_NAME: "fraud_detector"
       API_KEY: "dev-key"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
