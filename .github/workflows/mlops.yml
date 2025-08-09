@@ -33,7 +33,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false  # Disable LFS initially to avoid blocking
+          fetch-depth: 1  # Shallow clone for faster checkout
+          
+      # Try to pull LFS files separately with better error handling
+      - name: Setup Git LFS (optional)
+        continue-on-error: true  # Don't fail the entire workflow if LFS fails
+        run: |
+          git lfs install
+          echo "Attempting to pull LFS files..."
+          if ! git lfs pull; then
+            echo "⚠️ Warning: Failed to pull LFS files. Continuing without them."
+            echo "If your workflow requires large files, please check:"
+            echo "1. LFS quota limits on your GitHub account"
+            echo "2. LFS file permissions"
+            echo "3. Network connectivity issues"
+          else
+            echo "✅ LFS files pulled successfully"
+          fi
           
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -45,31 +62,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn mlflow
       
-      # 🔧 FIX: Install Docker Compose or use docker compose
-      - name: Install Docker Compose (if needed)
+      # 🔧 FIX: Improved Docker Compose installation
+      - name: Install Docker Compose
         run: |
-          # Check if docker-compose exists, if not, create an alias
-          if ! command -v docker-compose &> /dev/null; then
-            echo "docker-compose not found, using 'docker compose' instead"
-            sudo ln -sf $(which docker) /usr/local/bin/docker-compose-original
-            echo '#!/bin/bash' | sudo tee /usr/local/bin/docker-compose
-            echo 'docker compose "$@"' | sudo tee -a /usr/local/bin/docker-compose
+          # Check if docker compose (v2) is available (preferred)
+          if docker compose version >/dev/null 2>&1; then
+            echo "✅ Docker Compose v2 is available"
+            echo "DOCKER_COMPOSE_CMD=docker compose" >> $GITHUB_ENV
+          # Check if docker-compose (v1) is available
+          elif command -v docker-compose >/dev/null 2>&1; then
+            echo "✅ Docker Compose v1 is available"
+            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
+          else
+            echo "Installing Docker Compose..."
+            # Install Docker Compose v2 (recommended)
+            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             sudo chmod +x /usr/local/bin/docker-compose
+            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
           fi
           
-          # Verify it works
-          docker-compose --version
+          # Verify installation
+          if [ "$DOCKER_COMPOSE_CMD" = "docker compose" ]; then
+            docker compose version
+          else
+            docker-compose --version
+          fi
       
       - name: Start services with Docker Compose
         run: |
           echo "Starting MLflow, API, and Prometheus services..."
-          docker-compose up -d mlflow api prometheus
+          $DOCKER_COMPOSE_CMD up -d mlflow api prometheus
       
       # 🔧 DEBUG: Check what's happening immediately after startup
       - name: Debug container startup
         run: |
           echo "🔍 Checking initial container status..."
-          docker-compose ps
+          $DOCKER_COMPOSE_CMD ps
           
           echo ""
           echo "🔍 Waiting 10 seconds for containers to initialize..."
@@ -77,15 +105,15 @@ jobs:
           
           echo ""
           echo "🔍 Container status after 10 seconds..."
-          docker-compose ps
+          $DOCKER_COMPOSE_CMD ps
           
           echo ""
           echo "🔍 API container logs..."
-          docker-compose logs api
+          $DOCKER_COMPOSE_CMD logs api
           
           echo ""
           echo "🔍 MLflow container logs..."
-          docker-compose logs mlflow | tail -20
+          $DOCKER_COMPOSE_CMD logs mlflow | tail -20
       
       - name: Wait for services to be healthy
         run: |
@@ -107,7 +135,7 @@ jobs:
           if [ $attempt -eq $max_attempts ]; then
             echo "❌ MLflow failed to start"
             echo "MLflow logs:"
-            docker-compose logs mlflow
+            $DOCKER_COMPOSE_CMD logs mlflow
             exit 1
           fi
           
@@ -115,12 +143,12 @@ jobs:
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
             # Check if API container is still running
-            if ! docker-compose ps api | grep -q "Up"; then
+            if ! $DOCKER_COMPOSE_CMD ps api | grep -q "Up"; then
               echo "❌ API container is not running!"
               echo "API container status:"
-              docker-compose ps api
+              $DOCKER_COMPOSE_CMD ps api
               echo "API logs:"
-              docker-compose logs api
+              $DOCKER_COMPOSE_CMD logs api
               exit 1
             fi
             
@@ -141,16 +169,16 @@ jobs:
             # Show logs every 5 attempts
             if [ $((attempt % 5)) -eq 0 ]; then
               echo "API logs (attempt $attempt):"
-              docker-compose logs api | tail -10
+              $DOCKER_COMPOSE_CMD logs api | tail -10
             fi
           done
           
           if [ $attempt -eq $max_attempts ]; then
             echo "❌ API failed to become healthy"
             echo "Final API logs:"
-            docker-compose logs api
+            $DOCKER_COMPOSE_CMD logs api
             echo "Container status:"
-            docker-compose ps
+            $DOCKER_COMPOSE_CMD ps
             echo "Port check:"
             netstat -tulpn | grep :8000 || echo "Port 8000 not in use"
             exit 1
@@ -225,7 +253,7 @@ jobs:
             
             # Train model for this month
             echo "🚀 Training model with month $month data..."
-            docker-compose run --rm \
+            $DOCKER_COMPOSE_CMD run --rm \
               -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
               -e DATA_PATH="/app/$MONTH_FILE" \
               train
@@ -269,7 +297,7 @@ jobs:
             echo "🚀 Triggering model retraining..."
             
             # Train with drift-detected data
-            docker-compose run --rm \
+            $DOCKER_COMPOSE_CMD run --rm \
               -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
               -e DATA_PATH="/app/$MONTH_FILE" \
               train
@@ -295,7 +323,7 @@ jobs:
           echo "📅 Running monthly scheduled training for month $MONTH..."
           
           # Always train on monthly schedule
-          docker-compose run --rm \
+          $DOCKER_COMPOSE_CMD run --rm \
             -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
             -e DATA_PATH="/app/$MONTH_FILE" \
             train
@@ -321,7 +349,7 @@ jobs:
           echo "Drift check result: $drift_output"
           
           # Train model
-          docker-compose run --rm \
+          $DOCKER_COMPOSE_CMD run --rm \
             -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
             -e DATA_PATH="/app/$MONTH_FILE" \
             train
@@ -386,5 +414,14 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleaning up services..."
-          docker-compose logs --tail=50
-          docker-compose down
+          
+          # Only run cleanup if DOCKER_COMPOSE_CMD is set
+          if [ -n "$DOCKER_COMPOSE_CMD" ]; then
+            echo "Showing recent logs..."
+            $DOCKER_COMPOSE_CMD logs --tail=50 || echo "Failed to get logs"
+            
+            echo "Stopping services..."
+            $DOCKER_COMPOSE_CMD down || echo "Failed to stop services"
+          else
+            echo "Docker Compose command not available, skipping cleanup"
+          fi
