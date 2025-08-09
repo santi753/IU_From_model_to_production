@@ -1,11 +1,8 @@
 name: MLOps Pipeline
 
 on:
-  # Daily schedule at 3 AM UTC (will determine if monthly or daily internally)
   schedule:
     - cron: '0 3 * * *'
-  
-  # Manual trigger with option to run demo
   workflow_dispatch:
     inputs:
       run_demo:
@@ -13,490 +10,115 @@ on:
         required: false
         default: 'false'
         type: choice
-        options:
-          - 'true'
-          - 'false'
+        options: ['false', 'true']
 
 jobs:
   mlops-pipeline:
     runs-on: ubuntu-latest
-    
     env:
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
-      DOCKER_BUILDKIT: 1  # Enable BuildKit for faster Docker builds
-    
+      DOCKER_BUILDKIT: 1
+
     steps:
-      - name: Set API key
-        run: |
-          echo "API_KEY=dev-key" >> $GITHUB_ENV
-      
-      - name: Checkout repository
+      - name: Checkout repository (no LFS)
         uses: actions/checkout@v4
         with:
-          lfs: false  # Disable LFS initially to avoid blocking
-          fetch-depth: 1  # Shallow clone for faster checkout
-          
-      # Try to pull LFS files separately with better error handling
-      - name: Setup Git LFS (optional)
-        continue-on-error: true  # Don't fail the entire workflow if LFS fails
-        run: |
-          git lfs install
-          echo "Attempting to pull LFS files..."
-          if ! git lfs pull; then
-            echo "⚠️ Warning: Failed to pull LFS files. Continuing without them."
-            echo "If your workflow requires large files, please check:"
-            echo "1. LFS quota limits on your GitHub account"
-            echo "2. LFS file permissions"
-            echo "3. Network connectivity issues"
-          else
-            echo "✅ LFS files pulled successfully"
-          fi
-          
+          lfs: false
+          fetch-depth: 0
+
+      - name: Set API key
+        run: echo "API_KEY=dev-key" >> $GITHUB_ENV
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
-      - name: Install Python dependencies for scripts
+
+      - name: Verify Docker & Compose
         run: |
+          docker --version
+          docker compose version
+
+      # ---- Fetch data from Kaggle (uses repo secrets) ----
+      - name: Fetch dataset from Kaggle
+        run: |
+          if [ -f data/data_raw.csv ]; then
+            echo "data/data_raw.csv already exists — skipping Kaggle download."
+            exit 0
+          fi
+
           python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn mlflow
-      
-      # 🔧 FIX: Improved Docker Compose installation
-      - name: Install Docker Compose
-        run: |
-          # Check if docker compose (v2) is available (preferred)
-          if docker compose version >/dev/null 2>&1; then
-            echo "✅ Docker Compose v2 is available"
-            echo "DOCKER_COMPOSE_CMD=docker compose" >> $GITHUB_ENV
-            docker compose version
-          # Check if docker-compose (v1) is available
-          elif command -v docker-compose >/dev/null 2>&1; then
-            echo "✅ Docker Compose v1 is available"
-            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
-            docker-compose --version
-          else
-            echo "Installing Docker Compose..."
-            # Install Docker Compose v2 (recommended)
-            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
-            docker-compose --version
-          fi
-      
-      - name: Start services with Docker Compose
-        run: |
-          echo "Starting MLflow, API, and Prometheus services..."
-          $DOCKER_COMPOSE_CMD up -d mlflow api prometheus
-      
-      # 🔧 DEBUG: Check what's happening immediately after startup
-      - name: Debug container startup
-        run: |
-          echo "🔍 Checking initial container status..."
-          $DOCKER_COMPOSE_CMD ps
-          
-          echo ""
-          echo "🔍 Waiting 10 seconds for containers to initialize..."
-          sleep 10
-          
-          echo ""
-          echo "🔍 Container status after 10 seconds..."
-          $DOCKER_COMPOSE_CMD ps
-          
-          echo ""
-          echo "🔍 API container logs..."
-          $DOCKER_COMPOSE_CMD logs api
-          
-          echo ""
-          echo "🔍 MLflow container logs..."
-          $DOCKER_COMPOSE_CMD logs mlflow | tail -20
-      
-      - name: Wait for services to be healthy
-        run: |
-          echo "Waiting for services to become healthy..."
-          
-          # Wait for MLflow
-          max_attempts=60
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            if curl -f http://127.0.0.1:5000/ > /dev/null 2>&1; then
-              echo "✓ MLflow is healthy"
-              break
-            fi
-            echo "Waiting for MLflow... (attempt $((attempt+1))/$max_attempts)"
-            sleep 5
-            ((attempt++))
-          done
-          
-          if [ $attempt -eq $max_attempts ]; then
-            echo "❌ MLflow failed to start"
-            echo "MLflow logs:"
-            $DOCKER_COMPOSE_CMD logs mlflow
+          pip install kaggle
+
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "${{ secrets.KAGGLE_USERNAME }}" "${{ secrets.KAGGLE_KEY }}" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+          mkdir -p data/kaggle
+          kaggle datasets download -d divyaraj2006/credit-card-fraud-detection -p data/kaggle --unzip
+          echo "Downloaded files:"; ls -R data/kaggle
+
+          # If your training code expects a specific filename, adjust this copy.
+          CSV_FILE=$(ls data/kaggle/*.csv | head -n 1)
+          if [ -z "$CSV_FILE" ]; then
+            echo "No CSV found in dataset."
             exit 1
           fi
-          
-          # Wait for API with better debugging
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            # Check if API container is still running
-            if ! $DOCKER_COMPOSE_CMD ps api | grep -q "Up"; then
-              echo "❌ API container is not running!"
-              echo "API container status:"
-              $DOCKER_COMPOSE_CMD ps api
-              echo "API logs:"
-              $DOCKER_COMPOSE_CMD logs api
-              exit 1
+          mkdir -p data
+          cp "$CSV_FILE" data/data_raw.csv
+          echo "Using $(basename "$CSV_FILE") -> data/data_raw.csv"
+
+      - name: Build & start services
+        run: docker compose -f docker-compose.yml up -d --build
+
+      - name: Wait for API to be ready
+        run: |
+          echo "⏳ Waiting for API (http://localhost:8000/health) ..."
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8000/health >/dev/null; then
+              echo "API is up"
+              exit 0
             fi
-            
-            # Try to connect to API
-            echo "Attempting to connect to API... (attempt $((attempt+1))/$max_attempts)"
-            if curl -f http://127.0.0.1:8000/health > /dev/null 2>&1; then
-              echo "✓ API is healthy"
-              break
-            fi
-            
-            # Show what we got instead
-            echo "API response (if any):"
-            curl -s http://127.0.0.1:8000/health || echo "No response"
-            
-            sleep 5
-            ((attempt++))
-            
-            # Show logs every 5 attempts
-            if [ $((attempt % 5)) -eq 0 ]; then
-              echo "API logs (attempt $attempt):"
-              $DOCKER_COMPOSE_CMD logs api | tail -10
-            fi
+            sleep 3
           done
-          
-          if [ $attempt -eq $max_attempts ]; then
-            echo "❌ API failed to become healthy"
-            echo "Final API logs:"
-            $DOCKER_COMPOSE_CMD logs api
-            echo "Container status:"
-            $DOCKER_COMPOSE_CMD ps
-            echo "Port check:"
-            netstat -tulpn | grep :8000 || echo "Port 8000 not in use"
-            exit 1
-          fi
-          
-          echo "✅ All services are healthy!"
-      
-      - name: Generate simulated data if needed
-        run: |
-          echo "📁 Checking data availability..."
-          
-          # Check if data_raw.csv exists (reference data for drift detection)
-          if [ ! -f "data/data_raw.csv" ]; then
-            echo "⚠️ data_raw.csv not found, generating synthetic reference data..."
-            python -c "
-          import pandas as pd
-          import numpy as np
-          
-          # Generate synthetic reference dataset
-          np.random.seed(42)
-          n_samples = 50000
-          
-          # Generate features V1-V28 (simulating PCA transformed features)
-          data = {}
-          for i in range(1, 29):
-              data[f'V{i}'] = np.random.normal(0, 1, n_samples)
-          
-          data['Time'] = np.random.randint(0, 172800, n_samples)
-          data['Amount'] = np.random.lognormal(2, 1.5, n_samples)
-          data['Class'] = np.random.choice([0, 1], n_samples, p=[0.999, 0.001])
-          
-          df = pd.DataFrame(data)
-          df.to_csv('data/data_raw.csv', index=False)
-          print(f'✅ Generated reference data: {len(df)} samples')
-          "
-          else
-            echo "✅ Reference data (data_raw.csv) found"
-          fi
-          
-          # Check simulated monthly data
-          if [ ! -d "data/simulated" ] || [ -z "$(ls -A data/simulated 2>/dev/null)" ]; then
-            echo "📊 Generating simulated monthly data..."
-            mkdir -p data/simulated
-            
-            # Check if the simulation script exists
-            if [ -f "mlops/simulate_monthly_data.py" ]; then
-              python mlops/simulate_monthly_data.py
-            else
-              echo "⚠️ Simulation script not found, generating basic monthly data..."
-              python -c "
-          import pandas as pd
-          import numpy as np
-          import os
-          
-          # Generate 12 months of slightly different data
-          base_data = pd.read_csv('data/data_raw.csv')
-          
-          for month in range(1, 13):
-              # Add some drift by slightly shifting the distributions
-              monthly_data = base_data.copy()
-              drift_factor = month * 0.05  # Gradual drift over time
-              
-              # Add drift to some features
-              for i in range(1, 11):  # Add drift to first 10 V features
-                  col = f'V{i}'
-                  monthly_data[col] = monthly_data[col] + np.random.normal(drift_factor, 0.1, len(monthly_data))
-              
-              # Save monthly data
-              filename = f'data/simulated/month_{month:02d}.csv'
-              monthly_data.to_csv(filename, index=False)
-              print(f'Generated {filename}')
-          "
-            fi
-          else
-            echo "✅ Simulated monthly data already exists"
-            ls -la data/simulated/
-          fi
-      
-      # Determine workflow trigger and set variables
-      - name: Determine workflow context
-        id: context
-        run: |
-          # Get current month (1-12) and day (1-31)
-          CURRENT_MONTH=$(date +%-m)
-          CURRENT_DAY=$(date +%-d)
-          echo "current_month=$CURRENT_MONTH" >> $GITHUB_OUTPUT
-          echo "current_day=$CURRENT_DAY" >> $GITHUB_OUTPUT
-          
-          # Determine trigger type
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            # Check if it's the first day of the month
-            if [ $CURRENT_DAY -eq 1 ]; then
-              echo "trigger=monthly" >> $GITHUB_OUTPUT
-              echo "🗓️ First day of month - monthly training scheduled"
-            else
-              echo "trigger=daily" >> $GITHUB_OUTPUT
-              echo "📊 Daily drift check scheduled"
-            fi
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ "${{ inputs.run_demo }}" == "true" ]]; then
-              echo "trigger=demo" >> $GITHUB_OUTPUT
-              echo "🎯 Demo mode selected"
-            else
-              echo "trigger=manual" >> $GITHUB_OUTPUT
-              echo "🔧 Manual run triggered"
-            fi
-          fi
-      
-      # Handle demo mode - loop through all 12 months
-      - name: Run 12-month demonstration
-        if: steps.context.outputs.trigger == 'demo'
-        run: |
-          echo "🎯 Running 12-month demonstration..."
-          
-          for month in {1..12}; do
-            echo ""
-            echo "===================================="
-            echo "Processing Month $month"
-            echo "===================================="
-            
-            MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $month)
-            
-            # Always run drift check for demo
-            echo "🔍 Checking drift for month $month..."
-            
-            if [ -f "mlops/drift_check.py" ]; then
-              drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
-            else
-              echo "⚠️ Drift check script not found, using simple comparison..."
-              drift_output='{"drift_exceeded": false, "mean_psi": 0.05}'
-            fi
-            
-            echo "Drift check result: $drift_output"
-            
-            # Parse drift result
-            drift_exceeded=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['drift_exceeded'])")
-            mean_psi=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['mean_psi'])")
-            
-            echo "Mean PSI: $mean_psi"
-            echo "Drift exceeded: $drift_exceeded"
-            
-            # Train model for this month
-            echo "🚀 Training model with month $month data..."
-            $DOCKER_COMPOSE_CMD run --rm \
-              -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
-              -e DATA_PATH="/app/$MONTH_FILE" \
-              train
-            
-            # Hot-reload the API
-            echo "🔄 Reloading API with new model..."
-            reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
-              -H "x-api-key: $API_KEY" \
-              -H "Content-Type: application/json")
-            echo "Reload response: $reload_response"
-            
-            # Brief pause between months
-            sleep 2
-          done
-          
-          echo ""
-          echo "✅ 12-month demonstration complete!"
-      
-      # Handle daily drift check
-      - name: Daily drift check and conditional training
-        if: steps.context.outputs.trigger == 'daily'
-        run: |
-          MONTH=${{ steps.context.outputs.current_month }}
-          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
-          
-          echo "📊 Running daily drift check for month $MONTH..."
-          
-          # Run drift check
-          if [ -f "mlops/drift_check.py" ]; then
-            drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
-          else
-            echo "⚠️ Drift check script not found, using simple comparison..."
-            drift_output='{"drift_exceeded": false, "mean_psi": 0.05}'
-          fi
-          echo "Drift check result: $drift_output"
-          
-          # Parse results
-          drift_exceeded=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['drift_exceeded'])")
-          mean_psi=$(echo "$drift_output" | python -c "import json, sys; print(json.loads(sys.stdin.read())['mean_psi'])")
-          
-          echo "drift_exceeded=$drift_exceeded" >> $GITHUB_ENV
-          echo "mean_psi=$mean_psi" >> $GITHUB_ENV
-          
-          if [[ "$drift_exceeded" == "True" ]]; then
-            echo "⚠️ Drift threshold exceeded! Mean PSI: $mean_psi"
-            echo "🚀 Triggering model retraining..."
-            
-            # Train with drift-detected data
-            $DOCKER_COMPOSE_CMD run --rm \
-              -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
-              -e DATA_PATH="/app/$MONTH_FILE" \
-              train
-            
-            # Hot-reload the API
-            echo "🔄 Reloading API with new model..."
-            reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
-              -H "x-api-key: $API_KEY" \
-              -H "Content-Type: application/json")
-            echo "Reload response: $reload_response"
-          else
-            echo "✅ Drift within threshold. Mean PSI: $mean_psi"
-            echo "No retraining needed."
-          fi
-      
-      # Handle monthly scheduled training
-      - name: Monthly scheduled training
-        if: steps.context.outputs.trigger == 'monthly'
-        run: |
-          MONTH=${{ steps.context.outputs.current_month }}
-          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
-          
-          echo "📅 Running monthly scheduled training for month $MONTH..."
-          
-          # Always train on monthly schedule
-          $DOCKER_COMPOSE_CMD run --rm \
-            -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
-            -e DATA_PATH="/app/$MONTH_FILE" \
-            train
-          
-          # Hot-reload the API
-          echo "🔄 Reloading API with new model..."
-          reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
-            -H "x-api-key: $API_KEY" \
-            -H "Content-Type: application/json")
-          echo "Reload response: $reload_response"
-      
-      # Handle manual trigger (current month)
-      - name: Manual training
-        if: steps.context.outputs.trigger == 'manual'
-        run: |
-          MONTH=${{ steps.context.outputs.current_month }}
-          MONTH_FILE=$(printf "data/simulated/month_%02d.csv" $MONTH)
-          
-          echo "🔧 Running manual training for month $MONTH..."
-          
-          # Check drift first
-          if [ -f "mlops/drift_check.py" ]; then
-            drift_output=$(python mlops/drift_check.py "$MONTH_FILE" --ref-data data/data_raw.csv)
-          else
-            echo "⚠️ Drift check script not found, using simple comparison..."
-            drift_output='{"drift_exceeded": false, "mean_psi": 0.05}'
-          fi
-          echo "Drift check result: $drift_output"
-          
-          # Train model
-          $DOCKER_COMPOSE_CMD run --rm \
-            -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
-            -e DATA_PATH="/app/$MONTH_FILE" \
-            train
-          
-          # Hot-reload the API
-          echo "🔄 Reloading API with new model..."
-          reload_response=$(curl -s -X POST http://127.0.0.1:8000/reload \
-            -H "x-api-key: $API_KEY" \
-            -H "Content-Type: application/json")
-          echo "Reload response: $reload_response"
-      
-      # Test the API after any training
-      - name: Test API endpoint
-        if: always()
+          echo "API did not become ready in time. Dumping logs:"
+          docker compose logs api || true
+          exit 1
+
+      - name: 🧪 Test API predictions
         run: |
           echo "🧪 Testing API predictions..."
-          
-          # Test prediction endpoint
-          test_response=$(curl -s -X POST http://127.0.0.1:8000/predict \
+          curl -fsS -X POST http://localhost:8000/predict \
             -H "Content-Type: application/json" \
-            -H "x-api-key: $API_KEY" \
-            -d '{
-              "Time": 0,
-              "Amount": 149.62,
-              "V1": -1.36, "V2": -0.07, "V3": 2.54, "V4": 1.38,
-              "V5": -0.34, "V6": 0.46, "V7": 0.24, "V8": 0.10,
-              "V9": 0.36, "V10": 0.09, "V11": -0.55, "V12": -0.62,
-              "V13": -0.99, "V14": -0.31, "V15": 1.47, "V16": -0.47,
-              "V17": 0.21, "V18": 0.03, "V19": 0.40, "V20": 0.25,
-              "V21": -0.02, "V22": 0.28, "V23": -0.11, "V24": 0.07,
-              "V25": 0.13, "V26": -0.19, "V27": 0.13, "V28": -0.02
-            }')
-          
-          echo "API response: $test_response"
-          
-          # Check model info
-          model_info=$(curl -s http://127.0.0.1:8000/model-info \
-            -H "x-api-key: $API_KEY")
-          echo "Model info: $model_info"
-      
-      # Collect metrics
-      - name: Collect Prometheus metrics
+            -d '{"amount": 123.45}' | tee /tmp/predict.json
+
+      - name: Upload artifacts (logs/MLflow)
         if: always()
-        run: |
-          echo "📊 Collecting metrics..."
-          metrics=$(curl -s http://127.0.0.1:8000/metrics | grep -E "fraud_api|model_version" | head -20)
-          echo "$metrics"
-      
-      # Upload logs on failure
-      - name: Upload logs on failure
-        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ github.run_number }}
+          name: run-${{ github.run_number }}-artifacts
           path: |
             mlruns/
             *.log
+            /tmp/predict.json
+          if-no-files-found: ignore
           retention-days: 7
-      
-      # Clean up services
+
+      - name: Show service logs (always)
+        if: always()
+        run: docker compose logs --no-color > docker-compose.logs || true
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs-${{ github.run_number }}
+          path: docker-compose.logs
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Clean up services
         if: always()
         run: |
           echo "🧹 Cleaning up services..."
-          
-          # Only run cleanup if DOCKER_COMPOSE_CMD is set
-          if [ -n "$DOCKER_COMPOSE_CMD" ]; then
-            echo "Showing recent logs..."
-            $DOCKER_COMPOSE_CMD logs --tail=50 || echo "Failed to get logs"
-            
-            echo "Stopping services..."
-            $DOCKER_COMPOSE_CMD down || echo "Failed to stop services"
-          else
-            echo "Docker Compose command not available, skipping cleanup"
-          fi
+          docker compose down -v --remove-orphans || true
