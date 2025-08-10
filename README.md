@@ -168,32 +168,26 @@ curl -X POST http://localhost:8000/predict \
   -d '{
     "records": [
       {
-        "ApplicationTime": 1640995200,
-        "RequestedAmount": 2500.00,
-        "ApplicantAge": 34,
-        "IncomeLevel": 18000,
-        "EmploymentStatus": 2,
-        "FamilySize": 3,
-        "PreviousApplications": 1,
-        "DocumentationScore": 0.85,
-        "RegionCode": 101,
-        "ProgramType": 1,
-        "V1": -1.36, "V2": -0.07, "V3": 2.54,
-        ...
+        "Time": 0,
+        "Amount": 149.62,
+        "V1": -1.36, "V2": -0.07, "V3": 2.54, "V4": 1.38,
+        "V5": -0.34, "V6": 0.46, "V7": 0.24, "V8": 0.10,
+        "V9": 0.36, "V10": 0.09, "V11": -0.55, "V12": -0.62,
+        "V13": -0.99, "V14": -0.31, "V15": 1.47, "V16": -0.47,
+        "V17": 0.21, "V18": 0.03, "V19": 0.40, "V20": 0.25,
+        "V21": -0.02, "V22": 0.28, "V23": -0.11, "V24": 0.07,
+        "V25": 0.13, "V26": -0.19, "V27": 0.13, "V28": -0.02
       },
       {
-        "ApplicationTime": 1641081600,
-        "RequestedAmount": 1800.00,
-        "ApplicantAge": 28,
-        "IncomeLevel": 22000,
-        "EmploymentStatus": 1,
-        "FamilySize": 2,
-        "PreviousApplications": 0,
-        "DocumentationScore": 0.92,
-        "RegionCode": 105,
-        "ProgramType": 2,
-        "V1": 0.5, "V2": 1.2, "V3": -0.8,
-        ...
+        "Time": 100,
+        "Amount": 200.50,
+        "V1": 0.5, "V2": 1.2, "V3": -0.8, "V4": 0.3,
+        "V5": -0.1, "V6": 0.9, "V7": 0.15, "V8": 0.25,
+        "V9": 0.45, "V10": 0.12, "V11": -0.33, "V12": -0.41,
+        "V13": -0.77, "V14": -0.22, "V15": 1.11, "V16": -0.35,
+        "V17": 0.33, "V18": 0.08, "V19": 0.52, "V20": 0.31,
+        "V21": -0.05, "V22": 0.35, "V23": -0.14, "V24": 0.09,
+        "V25": 0.17, "V26": -0.23, "V27": 0.16, "V28": -0.04
       }
     ]
   }'
@@ -441,28 +435,43 @@ The test suite covers:
 
 ```
 iu_fraud/
-├── mlops/                          # Core MLOps components
-│   ├── api_main.py                # FastAPI prediction service for aid applications
-│   ├── train_and_register.py      # Model training pipeline for fraud detection
-│   ├── drift_check.py             # Data drift detection for changing conditions
-│   └── simulate_monthly_data.py   # Aid application data simulation
+├── .github/workflows/             # CI/CD pipeline
+│   └── mlops.yml                 # GitHub Actions workflow
+├── artifacts/                     # Model artifacts
+│   ├── clf.pkl                   # Trained classifier model
+│   ├── feature_order.json        # Feature ordering for predictions
+│   ├── scaler.pkl                # Data scaler for preprocessing
+│   ├── threshold.txt             # Decision threshold configuration
+│   └── trained_features.json     # Training feature metadata
 ├── data/                          # Application data storage
-│   ├── data_raw.csv              # Original aid application dataset
-│   └── simulated/                # Generated monthly application datasets
+│   ├── simulated/                # Generated monthly application datasets
+│   └── data_raw.csv              # Original fraud detection dataset
+├── mlops/                         # Core MLOps components
+│   ├── api_main.py               # FastAPI prediction service for aid applications
+│   ├── drift_check.py            # Data drift detection for changing conditions
+│   ├── simulate_monthly_data.py  # Aid application data simulation
+│   └── train_and_register.py     # Model training pipeline for fraud detection
+├── notebook/                      # Jupyter notebooks for development
+│   ├── fraud_detection_model.pkl # Model development artifacts
+│   └── model_creation.ipynb      # Model creation and experimentation
+├── prometheus/                    # Monitoring configuration
+│   └── prometheus.yml            # Prometheus monitoring config
 ├── tests/                         # Test suite
 │   ├── test_api.py               # API endpoint tests
 │   ├── test_drift_check.py       # Drift detection tests
 │   └── test_wrapper.py           # Model wrapper tests
-├── artifacts/                     # Model artifacts
-├── prometheus/                    # Monitoring configuration
-├── .github/workflows/             # CI/CD pipeline
-│   └── mlops.yml                 # GitHub Actions workflow
-├── docker-compose.yml            # Container orchestration
-├── Dockerfile.api                # API service container
-├── Dockerfile.train              # Training container
-├── Dockerfile.mlflow             # MLflow server container
-├── requirements.txt              # Python dependencies
-└── README.md                     # This file
+├── .dockerignore                  # Docker ignore file
+├── .gitattributes                 # Git attributes configuration
+├── .gitignore                     # Git ignore file
+├── Dockerfile.api                 # API service container
+├── Dockerfile.mlflow              # MLflow server container
+├── Dockerfile.train               # Training container
+├── LICENSE                        # Project license
+├── README-Docker.md               # Docker-specific documentation
+├── README.md                      # This file
+├── docker-compose.yml             # Container orchestration
+├── mlflow.db                      # MLflow SQLite database
+└── requirements.txt               # Python dependencies
 ```
 
 ## 🏛️ Government Agency Integration
