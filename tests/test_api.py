@@ -14,6 +14,9 @@ class DummyModel:
 class DummyClient:
     def get_latest_versions(self, name, stages=None):
         return [type("mv", (), {"version": "1"})()]
+    # Some app setups query by alias during startup; provide a stub to avoid warnings
+    def get_model_version_by_alias(self, name, alias):
+        return type("mv", (), {"version": "1"})()
 
 def _setup(monkeypatch):
     monkeypatch.setattr(api_main.mlflow.pyfunc, "load_model", lambda uri: DummyModel())
@@ -34,14 +37,14 @@ def test_predict_endpoint(monkeypatch):
 def test_batch_predict_endpoint(monkeypatch):
     _setup(monkeypatch)
     with TestClient(api_main.app) as client:
-        # Create batch request with 2 transactions
         payload = {
             "records": [
                 {feat: 0.0 for feat in api_main.FEATURES},
                 {feat: 1.0 for feat in api_main.FEATURES}
             ]
         }
-        response = client.post("/predict/batch", json=payload, headers={"x-api-key": "dev-key"})
+        # Use unified /predict endpoint for batch
+        response = client.post("/predict", json=payload, headers={"x-api-key": "dev-key"})
         assert response.status_code == 200
         data = response.json()
         assert data["model_name"] == api_main.MODEL_NAME
@@ -57,13 +60,11 @@ def test_missing_features_error(monkeypatch):
         payload = {"Time": 0.0, "Amount": 100.0}  # Missing V1-V28
         response = client.post("/predict", json=payload, headers={"x-api-key": "dev-key"})
         assert response.status_code == 422  # Pydantic validation error
-        data = response.json()
-        assert "detail" in data
+        assert "detail" in response.json()
 
 def test_invalid_api_key():
     with TestClient(api_main.app) as client:
         payload = {feat: 0.0 for feat in api_main.FEATURES}
         response = client.post("/predict", json=payload, headers={"x-api-key": "wrong-key"})
         assert response.status_code == 401
-        data = response.json()
-        assert "Invalid or missing API key" in data["detail"]
+        assert "Invalid or missing API key" in response.json()["detail"]
