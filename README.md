@@ -8,7 +8,7 @@ A comprehensive MLOps pipeline for detecting fraud in government aid application
 
 This project implements a complete MLOps workflow designed for a government agency supporting people in need with financial and consultancy programs. The system demonstrates how to automatically detect fraudulent applications to ensure legitimate beneficiaries receive support while preventing misuse of public resources.
 
-![Fraud Detection MLOps System Architecture](Diagram%20marmaid.png)
+![Fraud Detection MLOps System Architecture](system_diagram.png)
 
 **Key Components:**
 - **Model Training**: RandomForest classifier with SMOTE balancing and feature engineering for fraud detection
