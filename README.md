@@ -1,29 +1,32 @@
-# Credit Card Fraud Detection MLOps System
+# Government Aid Application Fraud Detection MLOps System
 
-A comprehensive MLOps pipeline for credit card fraud detection that demonstrates model training, serving, monitoring, and automated retraining using MLflow, FastAPI, Docker, and GitHub Actions.
+A comprehensive MLOps pipeline for detecting fraud in government aid applications that demonstrates model training, serving, monitoring, and automated retraining using MLflow, FastAPI, Docker, and GitHub Actions.
 
 ## 🏗️ System Architecture
 
-This project implements a complete MLOps workflow with the following components:
+This project implements a complete MLOps workflow designed for a government agency supporting people in need with financial and consultancy programs. The system automatically detects fraudulent applications to ensure legitimate beneficiaries receive support while preventing misuse of public resources.
 
-- **Model Training**: RandomForest classifier with SMOTE balancing and feature engineering
+**Key Components:**
+- **Model Training**: RandomForest classifier with SMOTE balancing and feature engineering for application fraud detection
 - **Model Registry**: MLflow for experiment tracking and model versioning
 - **API Service**: FastAPI-based prediction service with authentication and monitoring
-- **Drift Detection**: Automated data drift monitoring using Population Stability Index (PSI)
+- **Drift Detection**: Automated data drift monitoring using Population Stability Index (PSI) to adapt to changing political and social conditions
 - **Containerization**: Docker-based deployment with docker-compose orchestration
 - **CI/CD Pipeline**: GitHub Actions workflow for automated training and deployment
 - **Monitoring**: Prometheus metrics integration for production monitoring
 
 ## 📊 Dataset
 
-The system expects a credit card fraud dataset with the following structure:
-- `Time`: Transaction timestamp
-- `Amount`: Transaction amount
-- `V1-V28`: PCA-transformed features
+The system expects a fraud detection dataset with the following structure:
+- `Time`: Transaction/Application timestamp
+- `Amount`: Transaction/Application amount
+- `V1-V28`: PCA-transformed features (anonymized characteristics)
 - `Class`: Target variable (0=Normal, 1=Fraud)
 
+For demonstration purposes, the system uses the Credit Card Fraud Detection dataset structure, which serves as a proxy for government aid application fraud patterns.
+
 You can either:
-1. Download the "Credit Card Fraud Detection" dataset from Kaggle and place it at `data/data_raw.csv`
+1. Download the "Credit Card Fraud Detection" dataset from Kaggle: https://www.kaggle.com/datasets/divyaraj2006/credit-card-fraud-detection and place it at `data/data_raw.csv`
 2. Use Git LFS: `git lfs pull` (if the repository is configured with LFS)
 3. The system will generate synthetic data if no dataset is found
 
@@ -103,7 +106,7 @@ You can either:
 |----------|-------------|---------|
 | `MLFLOW_TRACKING_URI` | MLflow tracking server URL | `sqlite:///mlflow.db` |
 | `MLFLOW_ARTIFACT_LOCATION` | Artifact storage location | `./mlruns` |
-| `MODEL_NAME` | Registered model name | `fraud_detector` |
+| `MODEL_NAME` | Registered model name | `aid_fraud_detector` |
 | `DECISION_THRESHOLD` | Fraud detection threshold | `0.640` |
 | `API_KEY` | API authentication key | `dev-key` |
 | `DATA_PATH` | Training data file path | `data/data_raw.csv` |
@@ -127,7 +130,7 @@ export DECISION_THRESHOLD="0.5"
 
 ### Authentication
 
-All prediction endpoints require an API key in the header:
+All prediction endpoints require an API key in the header for security compliance:
 ```bash
 -H "x-api-key: dev-key"
 ```
@@ -139,7 +142,7 @@ All prediction endpoints require an API key in the header:
 curl http://localhost:8000/health
 ```
 
-#### Single Prediction
+#### Single Application Assessment
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
@@ -157,15 +160,41 @@ curl -X POST http://localhost:8000/predict \
   }'
 ```
 
-#### Batch Prediction
+#### Batch Application Processing
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{
     "records": [
-      {"Time": 0, "Amount": 149.62, "V1": -1.36, ...},
-      {"Time": 100, "Amount": 200.50, "V1": 0.5, ...}
+      {
+        "ApplicationTime": 1640995200,
+        "RequestedAmount": 2500.00,
+        "ApplicantAge": 34,
+        "IncomeLevel": 18000,
+        "EmploymentStatus": 2,
+        "FamilySize": 3,
+        "PreviousApplications": 1,
+        "DocumentationScore": 0.85,
+        "RegionCode": 101,
+        "ProgramType": 1,
+        "V1": -1.36, "V2": -0.07, "V3": 2.54,
+        ...
+      },
+      {
+        "ApplicationTime": 1641081600,
+        "RequestedAmount": 1800.00,
+        "ApplicantAge": 28,
+        "IncomeLevel": 22000,
+        "EmploymentStatus": 1,
+        "FamilySize": 2,
+        "PreviousApplications": 0,
+        "DocumentationScore": 0.92,
+        "RegionCode": 105,
+        "ProgramType": 2,
+        "V1": 0.5, "V2": 1.2, "V3": -0.8,
+        ...
+      }
     ]
   }'
 ```
@@ -193,39 +222,39 @@ curl http://localhost:8000/metrics
 
 The Docker setup includes:
 - **MLflow Container**: Centralized tracking server with SQLite backend
-- **Training Container**: On-demand model training
-- **API Container**: FastAPI prediction service
+- **Training Container**: On-demand model training for fraud detection
+- **API Container**: FastAPI prediction service for application assessment
 - **Prometheus Container**: Metrics collection and monitoring
 
 ### Individual Container Commands
 
 #### MLflow Server
 ```bash
-docker build -f Dockerfile.mlflow -t fraud-mlflow .
-docker run -d --name fraud-mlflow \
+docker build -f Dockerfile.mlflow -t aid-fraud-mlflow .
+docker run -d --name aid-fraud-mlflow \
   -p 127.0.0.1:5000:5000 \
   -v mlflow-db:/mlflow/mlflow-db \
   -v mlflow-artifacts:/mlflow/mlruns \
-  fraud-mlflow
+  aid-fraud-mlflow
 ```
 
 #### Training Job
 ```bash
-docker build -f Dockerfile.train -t fraud-train .
+docker build -f Dockerfile.train -t aid-fraud-train .
 docker run --rm \
   --network host \
   -v $(pwd)/data:/app/data:ro \
   -e MLFLOW_TRACKING_URI=http://localhost:5000 \
-  fraud-train
+  aid-fraud-train
 ```
 
 #### API Service
 ```bash
-docker build -f Dockerfile.api -t fraud-api .
-docker run -d --name fraud-api \
+docker build -f Dockerfile.api -t aid-fraud-api .
+docker run -d --name aid-fraud-api \
   --network host \
   -e MLFLOW_TRACKING_URI=http://localhost:5000 \
-  fraud-api
+  aid-fraud-api
 ```
 
 ### Docker Compose Workflow
@@ -237,7 +266,7 @@ docker-compose up mlflow api -d
 # Train initial model
 docker-compose run --rm train
 
-# Retrain with new data
+# Retrain with new application data
 docker-compose run --rm train
 
 # View logs
@@ -249,23 +278,23 @@ docker-compose down -v
 
 ## ⚙️ GitHub Actions CI/CD
 
-The repository includes a comprehensive GitHub Actions workflow (`.github/workflows/mlops.yml`) that supports:
+The repository includes a comprehensive GitHub Actions workflow (`.github/workflows/mlops.yml`) that supports automated model management as political and social conditions change:
 
 ### Trigger Types
 
 1. **Scheduled Runs**
-   - Daily at 3 AM UTC: Drift monitoring
-   - Monthly (1st day): Automatic retraining
+   - Daily at 3 AM UTC: Drift monitoring for changing application patterns
+   - Monthly (1st day): Automatic retraining to adapt to policy changes
 
 2. **Manual Triggers**
    - Standard run: Current month processing
-   - Demo mode: 12-month simulation
+   - Demo mode: 12-month simulation for testing system adaptability
 
 ### Workflow Features
 
-- **Automated Data Generation**: Creates synthetic datasets if none exist
-- **Drift Detection**: PSI-based monitoring with configurable thresholds
-- **Conditional Training**: Retrains models when drift exceeds thresholds
+- **Automated Data Generation**: Creates synthetic aid application datasets if none exist
+- **Drift Detection**: PSI-based monitoring to detect changes in application patterns
+- **Conditional Training**: Retrains models when application data drift exceeds thresholds
 - **Service Health Checks**: Validates all components before processing
 - **Comprehensive Testing**: API endpoints and model validation
 - **Artifact Collection**: Logs and metrics for debugging
@@ -289,26 +318,26 @@ Set these secrets in your GitHub repository:
 
 | Secret | Description |
 |--------|-------------|
-| `API_KEY` | Production API key |
+| `API_KEY` | Production API key for agency systems |
 | `DRIFT_PSI_THRESHOLD` | Drift detection threshold |
 
 ## 📈 Monitoring and Drift Detection
 
 ### Metrics Available
 
-The system exposes Prometheus metrics:
-- `fraud_api_requests_total`: Request counts by endpoint and status
-- `fraud_api_request_duration_seconds`: Request latency
-- `fraud_api_predictions_total`: Prediction counts by label
-- `fraud_api_model_version`: Current model version
+The system exposes Prometheus metrics for government oversight:
+- `aid_fraud_api_requests_total`: Request counts by endpoint and status
+- `aid_fraud_api_request_duration_seconds`: Request latency for application processing
+- `aid_fraud_api_predictions_total`: Prediction counts by fraud/legitimate classification
+- `aid_fraud_api_model_version`: Current model version in production
 
 ### Drift Detection
 
-The system includes automated drift detection using Population Stability Index (PSI):
+The system includes automated drift detection using Population Stability Index (PSI) to adapt to changing political and social conditions:
 
 ```bash
-# Check drift between datasets
-python mlops/drift_check.py new_data.csv --ref-data reference.csv
+# Check drift between application datasets
+python mlops/drift_check.py new_applications.csv --ref-data reference_applications.csv
 
 # With environment variables
 REF_DATA=data/data_raw.csv DRIFT_PSI_THRESHOLD=0.1 \
@@ -316,19 +345,19 @@ REF_DATA=data/data_raw.csv DRIFT_PSI_THRESHOLD=0.1 \
 ```
 
 **PSI Interpretation:**
-- `< 0.1`: No significant change
-- `0.1 - 0.2`: Moderate change
-- `> 0.2`: Significant change (triggers retraining)
+- `< 0.1`: No significant change in application patterns
+- `0.1 - 0.2`: Moderate change (monitor closely)
+- `> 0.2`: Significant change (triggers automatic retraining)
 
 ### Data Simulation
 
-Generate monthly datasets with progressive drift:
+Generate monthly application datasets with progressive drift to simulate changing social conditions:
 
 ```bash
-# Generate 12 months of simulated data
+# Generate 12 months of simulated aid application data
 python mlops/simulate_monthly_data.py
 
-# Custom parameters
+# Custom parameters for different scenarios
 python mlops/simulate_monthly_data.py \
   --num-months 6 \
   --sample-size 5000 \
@@ -354,12 +383,12 @@ pytest tests/test_drift_check.py -v
 ### Test Coverage
 
 The test suite covers:
-- API endpoint functionality
-- Authentication and authorization
-- Batch prediction handling
+- API endpoint functionality for application processing
+- Authentication and authorization for government security
+- Batch application processing
 - Error handling and validation
-- Drift detection algorithms
-- Model loading and prediction
+- Drift detection algorithms for policy changes
+- Model loading and prediction accuracy
 
 ## 🛠️ Development Workflow
 
@@ -393,7 +422,7 @@ The test suite covers:
 
 1. **Update Environment Variables**
    ```bash
-   export API_KEY="production-secret-key"
+   export API_KEY="production-government-secret-key"
    export MLFLOW_TRACKING_URI="postgresql://user:pass@host:5432/mlflow"
    ```
 
@@ -413,13 +442,13 @@ The test suite covers:
 ```
 iu_fraud/
 ├── mlops/                          # Core MLOps components
-│   ├── api_main.py                # FastAPI prediction service
-│   ├── train_and_register.py      # Model training pipeline
-│   ├── drift_check.py             # Data drift detection
-│   └── simulate_monthly_data.py   # Data simulation
-├── data/                          # Data storage
-│   ├── data_raw.csv              # Original dataset
-│   └── simulated/                # Generated monthly datasets
+│   ├── api_main.py                # FastAPI prediction service for aid applications
+│   ├── train_and_register.py      # Model training pipeline for fraud detection
+│   ├── drift_check.py             # Data drift detection for changing conditions
+│   └── simulate_monthly_data.py   # Aid application data simulation
+├── data/                          # Application data storage
+│   ├── data_raw.csv              # Original aid application dataset
+│   └── simulated/                # Generated monthly application datasets
 ├── tests/                         # Test suite
 │   ├── test_api.py               # API endpoint tests
 │   ├── test_drift_check.py       # Drift detection tests
@@ -435,6 +464,35 @@ iu_fraud/
 ├── requirements.txt              # Python dependencies
 └── README.md                     # This file
 ```
+
+## 🏛️ Government Agency Integration
+
+### System Requirements Met
+
+**Data Acquisition, Storage, and Processing:**
+- Secure RESTful API endpoints for application intake
+- Automated data validation and preprocessing
+- Scalable storage for thousands of monthly applications
+- Real-time fraud probability scoring
+
+**Monitoring and Reliability:**
+- Comprehensive health checks and performance monitoring
+- Automated drift detection for changing social conditions
+- Model versioning and rollback capabilities
+- Audit trails for regulatory compliance
+
+**Adaptability and Regular Updates:**
+- Monthly automated retraining triggers
+- Drift-based conditional retraining
+- Seamless model deployment without service interruption
+- GitHub Actions workflow for continuous integration
+
+### Security and Access Control
+
+- API key authentication for system access
+- Secure environment variable management
+- Dockerized isolation for production deployment
+- Prometheus metrics for operational oversight
 
 ## 🤝 Contributing
 
@@ -489,12 +547,12 @@ ports:
   - "127.0.0.1:8001:8000"  # Change 8000 to 8001
 ```
 
-**Data Issues**
+**Application Data Issues**
 ```bash
-# Validate data format
+# Validate application data format
 python -c "import pandas as pd; df=pd.read_csv('data/data_raw.csv'); print(df.info())"
 
-# Generate synthetic data
+# Generate synthetic application data
 python mlops/simulate_monthly_data.py --sample-size 1000
 ```
 
@@ -508,4 +566,6 @@ For additional support:
 
 ---
 
-**Built with ❤️ for MLOps best practices**
+**Built with ❤️ for government agencies and MLOps best practices**
+
+*This system enables government agencies to automatically detect fraud in aid applications while ensuring legitimate beneficiaries receive the support they need. The MLOps pipeline adapts to changing political and social conditions through automated drift detection and retraining.*
