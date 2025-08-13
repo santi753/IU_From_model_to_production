@@ -413,11 +413,6 @@ The test suite covers:
    python mlops/train_and_register.py
    ```
 
-3. **Debug Model Issues**
-   ```bash
-   python debug_model.py
-   ```
-
 ### Production Deployment
 
 1. **Update Environment Variables**
