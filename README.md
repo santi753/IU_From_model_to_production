@@ -325,7 +325,9 @@ Set these secrets in your GitHub repository:
 
 The system exposes Prometheus metrics for government oversight:
 - `fraud_api_requests_total`: Request counts by endpoint and status
-- `fraud_api_request_duration_seconds`: Request latency for application processing
+- `fraud_api_request_duration_seconds_bucket`: Histogram buckets for request latency, useful for calculating percentiles (e.g., p95, p99)
+- `fraud_api_request_duration_seconds_sum`: Total accumulated request duration, used together with the count metric to compute averages
+- `fraud_api_request_duration_seconds_count`: Number of observed requests for latency calculation
 - `fraud_api_predictions_total`: Prediction counts by fraud/legitimate classification
 - `fraud_api_model_version`: Current model version in production
 
