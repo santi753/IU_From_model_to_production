@@ -390,48 +390,6 @@ The test suite covers:
 - Drift detection algorithms for policy changes
 - Model loading and prediction accuracy
 
-## 🛠️ Development Workflow
-
-### Local Development
-
-1. **Setup Environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # or .\.venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
-   ```
-
-2. **Start Services**
-   ```bash
-   # Terminal 1: MLflow
-   mlflow ui
-
-   # Terminal 2: API
-   uvicorn mlops.api_main:app --reload
-
-   # Terminal 3: Train model
-   python mlops/train_and_register.py
-   ```
-
-### Production Deployment
-
-1. **Update Environment Variables**
-   ```bash
-   export API_KEY="production-government-secret-key"
-   export MLFLOW_TRACKING_URI="postgresql://user:pass@host:5432/mlflow"
-   ```
-
-2. **Deploy with Docker**
-   ```bash
-   docker-compose -f docker-compose.prod.yml up -d
-   ```
-
-3. **Monitor Health**
-   ```bash
-   curl http://production-host:8000/health
-   curl http://production-host:8000/metrics
-   ```
-
 ## 📂 Project Structure
 
 ```
